@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    # Lagrange is Windows-only: it talks to Windows Credential Manager through
+    # advapi32, so importing it anywhere else is meaningless.
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Compile
+        run: python -m compileall -q lagrange scripts
+
+      - name: Import every module
+        # Nothing here touches the vault or the network at import time; if that
+        # ever changes, this step is where it will show up.
+        run: |
+          python -c "import lagrange, lagrange.api, lagrange.accounts, lagrange.config, lagrange.credstore, lagrange.discovery, lagrange.doctor, lagrange.i18n, lagrange.runner, lagrange.session, lagrange.ui; print(lagrange.__version__)"
+
+      - name: CLI responds without an install
+        run: |
+          python -m lagrange version
+          python -m lagrange --help
+
+      - name: Doctor runs with no Antigravity present
+        # It must report the absence rather than crash — a broken environment is
+        # exactly when people run it.
+        run: python -m lagrange doctor --quick
+        continue-on-error: true
+
+      - name: Lint
+        run: |
+          python -m pip install --quiet ruff
+          ruff check .
+
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: |
+          python -m pip install --quiet build
+          python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

@@ -1,0 +1,14 @@
+# Normalise to LF in the repository; Windows checkouts still get CRLF.
+* text=auto
+
+# Batch files break if a line ending is wrong, so pin them.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+
+*.png binary

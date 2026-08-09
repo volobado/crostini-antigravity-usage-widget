@@ -1,0 +1,576 @@
+"""
+The widget itself: a compact always-on-top Tkinter window.
+
+Quota is fetched on a worker thread so the window never freezes, including
+during the browser sign-in, which can take minutes.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import os
+import queue
+import socket
+import subprocess
+import threading
+import tkinter as tk
+from datetime import datetime, timezone
+
+from . import accounts, config, session
+from .i18n import t
+from .i18n import window as window_label
+
+# ─── palette ────────────────────────────────────────────────────────────────
+BG = "#12131a"
+CARD = "#1a1c26"
+CARD_ACTIVE = "#1f2333"
+BORDER = "#272b3a"
+TEXT = "#e6e8f0"
+MUTED = "#8b90a5"
+DIM = "#5f6478"
+ACCENT = "#6d8cff"
+TRACK = "#2a2e3d"
+
+GREEN = "#3ddc84"
+AMBER = "#ffb84d"
+RED = "#ff5c5c"
+
+F_TITLE = ("Segoe UI Semibold", 9)
+F_MAIN = ("Segoe UI", 9)
+F_SMALL = ("Segoe UI", 8)
+F_TINY = ("Segoe UI", 7)
+F_MAIL = ("Segoe UI Semibold", 10)
+
+SINGLETON_PORT = 52719
+
+# Narrow enough to stay out of the way, wide enough that the title bar buttons
+# remain clickable when the widget is collapsed.
+MIN_WIDTH = 320
+
+
+def bar_color(fraction: float) -> str:
+    if fraction > 0.5:
+        return GREEN
+    if fraction > 0.2:
+        return AMBER
+    return RED
+
+
+def human_left(reset: datetime | None) -> str:
+    if not reset:
+        return ""
+    seconds = (reset - datetime.now(timezone.utc)).total_seconds()
+    if seconds <= 0:
+        return t("refreshing_now")
+    hours, minutes = int(seconds // 3600), int(seconds % 3600 // 60)
+    if hours >= 24:
+        return t("days_short", days=hours // 24, hours=hours % 24)
+    if hours:
+        return t("hours_short", hours=hours, minutes=minutes)
+    return t("minutes_short", minutes=minutes)
+
+
+class Singleton:
+    """
+    A lock held on a loopback port.
+
+    Launching Lagrange twice — from both Antigravity shortcuts, say — should not
+    open two windows, so the second run pokes the first and exits.
+    """
+
+    def __init__(self, on_raise=None):
+        self.on_raise = on_raise
+        self._sock: socket.socket | None = None
+
+    def acquire(self) -> bool:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind(("127.0.0.1", SINGLETON_PORT))
+        except OSError:
+            sock.close()
+            return False
+        sock.listen(4)
+        self._sock = sock
+        threading.Thread(target=self._serve, daemon=True).start()
+        return True
+
+    def _serve(self):
+        while True:
+            try:
+                conn, _ = self._sock.accept()
+                conn.close()
+                if self.on_raise:
+                    self.on_raise()
+            except OSError:
+                return
+
+    @staticmethod
+    def poke() -> None:
+        try:
+            with socket.create_connection(("127.0.0.1", SINGLETON_PORT), timeout=2):
+                pass
+        except OSError:
+            pass
+
+
+class Bar(tk.Frame):
+    """Remaining-quota bar."""
+
+    def __init__(self, master, width=132, height=7):
+        super().__init__(master, bg=TRACK, width=width, height=height, highlightthickness=0)
+        self.pack_propagate(False)
+        self._fill = tk.Frame(self, bg=GREEN, highlightthickness=0)
+        self._fill.place(x=0, y=0, relheight=1.0, relwidth=1.0)
+
+    def set(self, fraction: float | None):
+        if fraction is None:
+            self._fill.place_configure(relwidth=0)
+            return
+        fraction = max(0.0, min(1.0, fraction))
+        self._fill.configure(bg=bar_color(fraction))
+        # A sliver reads worse than nothing at all.
+        self._fill.place_configure(relwidth=fraction if fraction > 0.012 else 0)
+
+
+class Widget:
+    def __init__(self):
+        self.ui_state = accounts.load_ui_state()
+        self.expanded: set[str] = set(self.ui_state.get("expanded", []))
+        self.results: queue.Queue = queue.Queue()
+        self.commands: queue.Queue = queue.Queue()
+        self.state: dict | None = None
+        self.busy_text: str | None = t("loading")
+        self.banner: tuple[str, str] | None = None
+        self.countdowns: list[tuple[tk.Label, datetime]] = []
+        self.refresh_seconds = int(config.get("refresh_seconds"))
+        self.seconds_left = self.refresh_seconds
+        self.collapsed = False
+        self._width = MIN_WIDTH
+        self._stop = threading.Event()
+
+        self._build()
+        threading.Thread(target=self._worker, daemon=True).start()
+        self.commands.put(("refresh", None))
+        self.root.after(150, self._drain)
+        self.root.after(1000, self._tick)
+
+    # ── window ──────────────────────────────────────────────────────────────
+    def _build(self):
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.root.title("Lagrange")
+        self.root.configure(bg=BG)
+        self.root.overrideredirect(True)
+        self.root.geometry(self.ui_state.get("geometry") or "+40+60")
+        self.root.attributes("-topmost", bool(self.ui_state.get("pinned", True)))
+
+        outer = tk.Frame(self.root, bg=BORDER, padx=1, pady=1)
+        outer.pack(fill="both", expand=True)
+        shell = tk.Frame(outer, bg=BG)
+        shell.pack(fill="both", expand=True)
+
+        titlebar = tk.Frame(shell, bg=BG, height=30)
+        titlebar.pack(fill="x")
+        titlebar.pack_propagate(False)
+
+        caption = tk.Label(titlebar, text=t("title"), bg=BG, fg=TEXT, font=F_TITLE)
+        caption.pack(side="left", padx=(12, 0))
+
+        for text, command, name in (("✕", self._close, "close"),
+                                    ("─", self._toggle_collapse, "collapse"),
+                                    ("📌", self._toggle_pin, "pin")):
+            button = tk.Label(titlebar, text=text, bg=BG, fg=MUTED, font=F_MAIN,
+                              cursor="hand2", padx=8)
+            button.pack(side="right")
+            button.bind("<Button-1>", lambda _e, c=command: c())
+            button.bind("<Enter>", lambda e: e.widget.configure(fg=TEXT))
+            button.bind("<Leave>", lambda e: e.widget.configure(fg=MUTED))
+            if name == "pin":
+                self.pin_button = button
+
+        for widget in (titlebar, caption):
+            widget.bind("<Button-1>", self._drag_start)
+            widget.bind("<B1-Motion>", self._drag_move)
+
+        self.body = tk.Frame(shell, bg=BG)
+        self.body.pack(fill="both", expand=True)
+        self.content = tk.Frame(self.body, bg=BG)
+        self.content.pack(fill="both", expand=True, padx=8, pady=(2, 0))
+
+        footer = tk.Frame(self.body, bg=BG, height=34)
+        footer.pack(fill="x", padx=8, pady=(4, 8))
+        self._button(footer, t("add_account"), self._add_account, primary=True).pack(side="left")
+
+        self.status = tk.Label(footer, text="", bg=BG, fg=DIM, font=F_SMALL)
+        self.status.pack(side="right", padx=(0, 4))
+
+        refresh = tk.Label(footer, text="⟳", bg=BG, fg=MUTED, font=F_MAIN,
+                           cursor="hand2", padx=6)
+        refresh.pack(side="right")
+        refresh.bind("<Button-1>", lambda _e: self._request("refresh"))
+        refresh.bind("<Enter>", lambda e: e.widget.configure(fg=ACCENT))
+        refresh.bind("<Leave>", lambda e: e.widget.configure(fg=MUTED))
+
+        self._sync_pin()
+        self.root.minsize(MIN_WIDTH, 32)
+        self.root.deiconify()
+        self.root.update_idletasks()
+
+    def _button(self, master, text, command, primary=False, small=False):
+        bg = ACCENT if primary else CARD
+        fg = "#0d1020" if primary else TEXT
+        button = tk.Label(master, text=text, bg=bg, fg=fg,
+                          font=F_SMALL if small else F_MAIN,
+                          padx=8 if small else 12, pady=3 if small else 5, cursor="hand2")
+        hover = "#8aa3ff" if primary else BORDER
+        button.bind("<Button-1>", lambda _e: command())
+        button.bind("<Enter>", lambda e: e.widget.configure(bg=hover))
+        button.bind("<Leave>", lambda e: e.widget.configure(bg=bg))
+        return button
+
+    def _drag_start(self, event):
+        self._drag_from = (event.x_root, event.y_root)
+        self._win_from = (self.root.winfo_x(), self.root.winfo_y())
+
+    def _drag_move(self, event):
+        self.root.geometry(
+            f"+{self._win_from[0] + event.x_root - self._drag_from[0]}"
+            f"+{self._win_from[1] + event.y_root - self._drag_from[1]}")
+
+    def _toggle_pin(self):
+        pinned = not bool(self.root.attributes("-topmost"))
+        self.root.attributes("-topmost", pinned)
+        self.ui_state["pinned"] = pinned
+        self._sync_pin()
+        self._save_ui()
+
+    def _sync_pin(self):
+        self.pin_button.configure(fg=ACCENT if self.root.attributes("-topmost") else DIM)
+
+    def _toggle_collapse(self):
+        self.collapsed = not self.collapsed
+        if self.collapsed:
+            self.body.pack_forget()
+        else:
+            self.body.pack(fill="both", expand=True)
+        self._fit()
+
+    def _close(self):
+        self._save_ui()
+        self._stop.set()
+        self.root.destroy()
+
+    def _save_ui(self):
+        self.ui_state["geometry"] = f"+{self.root.winfo_x()}+{self.root.winfo_y()}"
+        self.ui_state["expanded"] = sorted(self.expanded)
+        accounts.save_ui_state(self.ui_state)
+
+    def raise_window(self):
+        def show():
+            self.root.deiconify()
+            self.root.lift()
+            self.root.attributes("-topmost", True)
+            if not self.ui_state.get("pinned", True):
+                self.root.after(1200, lambda: self.root.attributes("-topmost", False))
+        self.root.after(0, show)
+
+    # ── background work ─────────────────────────────────────────────────────
+    def _request(self, action, payload=None):
+        self.busy_text = {"refresh": t("refreshing"), "switch": t("switching"),
+                          "add": t("waiting_browser")}.get(action)
+        self._render()
+        self.commands.put((action, payload))
+
+    def _worker(self):
+        while not self._stop.is_set():
+            try:
+                action, payload = self.commands.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                if action == "refresh":
+                    self.results.put(("state", accounts.collect_state()))
+                elif action == "switch":
+                    accounts.switch_to(payload)
+                    in_place = session.request_restart(payload)
+                    self.results.put(
+                        ("banner", ("switched_here" if in_place else "switched", payload)))
+                    self.results.put(("state", accounts.collect_state()))
+                elif action == "add":
+                    info = accounts.add_account()
+                    self.results.put(("banner", ("added", info["email"])))
+                    self.results.put(("state", accounts.collect_state()))
+            except Exception as exc:  # a network blip must not kill the widget
+                self.results.put(("banner", ("error", str(exc)[:160])))
+                try:
+                    self.results.put(("state", accounts.collect_state()))
+                except Exception:
+                    self.results.put(("idle", None))
+
+    def _drain(self):
+        try:
+            while True:
+                kind, payload = self.results.get_nowait()
+                if kind == "state":
+                    self.state = payload
+                    self.busy_text = None
+                    self.seconds_left = self.refresh_seconds
+                elif kind == "banner":
+                    self.banner = payload
+                elif kind == "idle":
+                    self.busy_text = None
+                self._render()
+        except queue.Empty:
+            pass
+        self.root.after(150, self._drain)
+
+    def _tick(self):
+        self.seconds_left -= 1
+        if self.seconds_left <= 0 and not self.busy_text:
+            self.seconds_left = self.refresh_seconds
+            self.commands.put(("refresh", None))
+        for label, reset in self.countdowns:
+            with contextlib.suppress(tk.TclError):
+                label.configure(text=human_left(reset))
+        if not self.busy_text:
+            self.status.configure(text=t("next_refresh", seconds=self.seconds_left))
+        self.root.after(1000, self._tick)
+
+    # ── rendering ───────────────────────────────────────────────────────────
+    def _render(self):
+        for child in self.content.winfo_children():
+            child.destroy()
+        self.countdowns.clear()
+
+        if self.banner:
+            self._render_banner()
+
+        if self.state is None:
+            tk.Label(self.content, text=self.busy_text or "…", bg=BG, fg=MUTED,
+                     font=F_MAIN, pady=18).pack()
+            self._fit()
+            return
+
+        if not self.state["accounts"]:
+            self._render_empty()
+        else:
+            for account in self.state["accounts"]:
+                self._render_account(account)
+
+        if self.busy_text:
+            self.status.configure(text=self.busy_text)
+        self._fit()
+
+    def _fit(self):
+        """
+        Resize to fit without losing position: geometry("") hands placement back
+        to the window manager and the window jumps away from where it was put.
+
+        Width is floored at MIN_WIDTH because the title bar has size propagation
+        switched off — collapsed, it asks for almost no width at all, and the
+        window would shrink to a strip too narrow to click.
+        """
+        self.root.update_idletasks()
+        x, y = self.root.winfo_x(), self.root.winfo_y()
+        width = max(self.root.winfo_reqwidth(), MIN_WIDTH, self._width)
+        if not self.collapsed:
+            self._width = width
+        self.root.geometry(f"{width}x{self.root.winfo_reqheight()}+{x}+{y}")
+
+    def _render_banner(self):
+        kind, value = self.banner
+        color = {"switched": ACCENT, "switched_here": GREEN,
+                 "added": GREEN, "error": RED}[kind]
+        text = {"switched": t("switched", email=value),
+                "switched_here": t("switched", email=value),
+                "added": t("added", email=value),
+                "error": value}[kind]
+
+        box = tk.Frame(self.content, bg=CARD, highlightbackground=color, highlightthickness=1)
+        box.pack(fill="x", pady=(4, 6))
+        row = tk.Frame(box, bg=CARD)
+        row.pack(fill="x", padx=8, pady=(6, 2))
+        tk.Label(row, text=text, bg=CARD, fg=TEXT, font=F_SMALL, wraplength=270,
+                 justify="left").pack(side="left")
+        close = tk.Label(row, text="✕", bg=CARD, fg=DIM, font=F_TINY, cursor="hand2")
+        close.pack(side="right")
+        close.bind("<Button-1>", lambda _e: self._dismiss())
+
+        if kind == "switched_here":
+            # A wrapper is running: leaving agy relaunches it in that console.
+            tk.Label(box, text=t("restart_in_place"), bg=CARD, fg=MUTED, font=F_TINY,
+                     wraplength=280, justify="left").pack(anchor="w", padx=8, pady=(0, 8))
+        elif kind == "switched":
+            launchers = config.get("launchers") or []
+            tk.Label(box, text=t("restart_hint") if launchers else t("restart_manual"),
+                     bg=CARD, fg=MUTED, font=F_TINY, wraplength=280,
+                     justify="left").pack(anchor="w", padx=8,
+                                          pady=(0, 0 if launchers else 8))
+            if launchers:
+                row = tk.Frame(box, bg=CARD)
+                row.pack(anchor="w", padx=8, pady=(4, 8))
+                for launcher in launchers[:3]:
+                    path = launcher.get("path", "")
+                    self._button(row, launcher.get("label", "Launch"),
+                                 lambda p=path: self._launch(p),
+                                 small=True).pack(side="left", padx=(0, 6))
+        else:
+            tk.Frame(box, bg=CARD, height=6).pack()
+
+    def _dismiss(self):
+        self.banner = None
+        self._render()
+
+    def _launch(self, path: str):
+        if not path or not os.path.exists(path):
+            self.banner = ("error", f"launcher not found: {path}")
+            self._render()
+            return
+        try:
+            subprocess.Popen(["cmd.exe", "/c", "start", "", "cmd.exe", "/k", path],
+                             cwd=os.path.dirname(path) or None, close_fds=True)
+        except OSError as exc:
+            self.banner = ("error", f"could not start {os.path.basename(path)}: {exc}")
+            self._render()
+
+    def _render_empty(self):
+        box = tk.Frame(self.content, bg=CARD)
+        box.pack(fill="x", pady=6)
+        message = t("no_accounts") if self.state.get("logged_in") else t("not_signed_in")
+        tk.Label(box, text=message, bg=CARD, fg=MUTED, font=F_MAIN, justify="left",
+                 wraplength=280, padx=12, pady=14).pack(anchor="w")
+
+    def _render_account(self, account: dict):
+        email = account["email"]
+        running, loaded, pending = account["running"], account["loaded"], account["pending"]
+        # A card is highlighted for what agy is really using; when nothing is
+        # known to be running, the loaded account takes that role.
+        highlighted = running or (loaded and not self.state.get("tracking"))
+        expanded = highlighted or pending or email in self.expanded
+        bg = CARD_ACTIVE if highlighted else CARD
+
+        border = ACCENT if highlighted else (AMBER if pending else BORDER)
+        card = tk.Frame(self.content, bg=bg, highlightbackground=border, highlightthickness=1)
+        card.pack(fill="x", pady=3)
+
+        interactive = not (running or (loaded and not self.state.get("tracking")))
+        header = tk.Frame(card, bg=bg, cursor="hand2" if interactive else "")
+        header.pack(fill="x", padx=10, pady=(7, 2))
+        tk.Label(header, text="●" if highlighted else "○", bg=bg,
+                 fg=ACCENT if highlighted else (AMBER if pending else DIM),
+                 font=F_MAIN).pack(side="left")
+        tk.Label(header, text=email, bg=bg, fg=TEXT if highlighted else MUTED,
+                 font=F_MAIL if highlighted else F_MAIN).pack(side="left", padx=(6, 0))
+
+        if running:
+            tk.Label(header, text=t("running"), bg=bg, fg=ACCENT,
+                     font=F_TINY).pack(side="right")
+        elif pending:
+            tk.Label(header, text=t("next_start"), bg=bg, fg=AMBER,
+                     font=F_TINY).pack(side="right")
+        elif loaded:
+            tk.Label(header, text=t("loaded"), bg=bg, fg=ACCENT,
+                     font=F_TINY).pack(side="right")
+        else:
+            tk.Label(header, text="▾" if expanded else "▸", bg=bg, fg=DIM,
+                     font=F_TINY).pack(side="right")
+
+        if interactive:
+            for widget in (header, *header.winfo_children()):
+                widget.bind("<Button-1>", lambda _e, m=email: self._toggle_account(m))
+
+        if pending:
+            tk.Label(card, text=t("pending_hint"), bg=bg, fg=AMBER, font=F_TINY,
+                     wraplength=280, justify="left").pack(anchor="w", padx=10, pady=(0, 2))
+
+        if account["error"] == "reauth":
+            box = tk.Frame(card, bg=bg)
+            box.pack(fill="x", padx=10, pady=(2, 8))
+            tk.Label(box, text=t("revoked"), bg=bg, fg=RED, font=F_SMALL).pack(anchor="w")
+            self._button(box, t("sign_in_again"), self._add_account,
+                         small=True).pack(anchor="w", pady=(4, 0))
+            return
+
+        if account["error"]:
+            tk.Label(card, text=account["error"], bg=bg, fg=AMBER, font=F_SMALL,
+                     wraplength=280, justify="left").pack(anchor="w", padx=10, pady=(2, 8))
+            return
+
+        if expanded:
+            for group in account["groups"]:
+                self._render_group(card, group, bg)
+        else:
+            self._render_compact(card, account, bg)
+
+        if running or loaded:
+            tk.Frame(card, bg=bg, height=6).pack()
+        else:
+            row = tk.Frame(card, bg=bg)
+            row.pack(fill="x", padx=10, pady=(2, 8))
+            self._button(row, t("switch"), lambda m=email: self._request("switch", m),
+                         small=True).pack(side="right")
+
+    def _render_group(self, card, group: dict, bg: str):
+        tk.Label(card, text=group["name"], bg=bg, fg=MUTED,
+                 font=F_TITLE).pack(anchor="w", padx=10, pady=(6, 1))
+        for bucket in group["buckets"]:
+            row = tk.Frame(card, bg=bg)
+            row.pack(fill="x", padx=10, pady=1)
+            tk.Label(row, text=window_label(bucket["window"], bucket["window_label"]),
+                     bg=bg, fg=DIM, font=F_SMALL, width=8, anchor="w").pack(side="left")
+
+            bar = Bar(row)
+            bar.pack(side="left", padx=(0, 8))
+            bar.set(bucket["remaining"])
+
+            remaining = bucket["remaining"]
+            tk.Label(row, text="—" if remaining is None else f"{remaining * 100:.0f}%",
+                     bg=bg, fg=TEXT if remaining is None else bar_color(remaining),
+                     font=F_TITLE, width=5, anchor="e").pack(side="left")
+
+            countdown = tk.Label(row, text=human_left(bucket["reset"]), bg=bg, fg=DIM,
+                                 font=F_TINY, width=9, anchor="e")
+            countdown.pack(side="right")
+            if bucket["reset"]:
+                self.countdowns.append((countdown, bucket["reset"]))
+
+    def _render_compact(self, card, account: dict, bg: str):
+        """Collapsed card: one row per group, showing its tightest window."""
+        for group in account["groups"]:
+            values = [b["remaining"] for b in group["buckets"] if b["remaining"] is not None]
+            if not values:
+                continue
+            worst = min(values)
+            row = tk.Frame(card, bg=bg)
+            row.pack(fill="x", padx=10, pady=1)
+            tk.Label(row, text=group["name"], bg=bg, fg=DIM, font=F_SMALL, width=11,
+                     anchor="w").pack(side="left")
+            bar = Bar(row, width=110)
+            bar.pack(side="left", padx=(0, 8))
+            bar.set(worst)
+            tk.Label(row, text=f"{worst * 100:.0f}%", bg=bg, fg=bar_color(worst),
+                     font=F_TITLE, width=5, anchor="e").pack(side="left")
+
+    def _toggle_account(self, email: str):
+        self.expanded.symmetric_difference_update({email})
+        self._save_ui()
+        self._render()
+
+    def _add_account(self):
+        self._request("add")
+
+    def run(self):
+        self.root.protocol("WM_DELETE_WINDOW", self._close)
+        self.root.mainloop()
+
+
+def main() -> int:
+    accounts.migrate_legacy()
+    lock = Singleton()
+    if not lock.acquire():
+        Singleton.poke()  # already running — surface that window instead
+        return 0
+    widget = Widget()
+    lock.on_raise = widget.raise_window
+    widget.run()
+    return 0

@@ -1,0 +1,59 @@
+name: Bug report
+description: Something misbehaves and it is not an Antigravity change
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If `lagrange doctor` reports a failure, please use the **Compatibility
+        break** template instead — that is a different kind of problem.
+
+        Please redact addresses in screenshots. `account-1@example.com` is
+        plenty for a report.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start `lagrange run`
+        2. Press Switch on a second account
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: lagrange doctor
+      description: Optional, but it rules out a whole class of causes.
+      render: text
+
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: "`lagrange version`, and Windows build"
+      placeholder: "lagrange 1.0.0 (verified against agy 1.1.11), Windows 11 26100"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: launcher
+    attributes:
+      label: How do you start Antigravity?
+      options:
+        - "lagrange run (in-place switching)"
+        - "agy directly"
+        - "Something else"
+    validations:
+      required: true

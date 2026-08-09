@@ -1,0 +1,58 @@
+name: Compatibility break
+description: Antigravity changed and Lagrange stopped working
+title: "[compat] "
+labels: ["compatibility"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Lagrange depends on internals Google never promised to keep, so this is
+        expected rather than unusual — thank you for reporting it.
+
+        `lagrange doctor --json` is redacted by design: it prints lengths and
+        last characters, never tokens, secrets or full addresses. It is usually
+        the whole diagnosis.
+
+        While you wait, [docs/COMPATIBILITY.md](../blob/main/docs/COMPATIBILITY.md)
+        lists each failure and how to patch it locally.
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: lagrange doctor --json
+      render: json
+    validations:
+      required: true
+
+  - type: input
+    id: agy-version
+    attributes:
+      label: Antigravity version
+      description: Output of `agy --version`
+      placeholder: "1.1.12"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you were doing, and what the widget did instead.
+    validations:
+      required: true
+
+  - type: input
+    id: lagrange-version
+    attributes:
+      label: Lagrange version
+      description: Output of `lagrange version`
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked that no address, token or secret appears in what I pasted
+          required: true
