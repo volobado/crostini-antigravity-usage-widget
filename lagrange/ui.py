@@ -197,12 +197,15 @@ class Widget:
         self.hidden = False
         self._width = MIN_WIDTH
         self._stop = threading.Event()
+        self._timers: dict[str, str] = {}
 
         # Before the window: whether the tray took means whether hiding is offered.
         self.tray = self._start_tray()
 
         self._build()
-        threading.Thread(target=self._worker, daemon=True).start()
+        self._worker_thread = threading.Thread(target=self._worker, daemon=True,
+                                               name="lagrange-worker")
+        self._worker_thread.start()
         self.commands.put(("refresh", None))
         self.root.after(150, self._drain)
         self.root.after(1000, self._tick)
@@ -408,8 +411,18 @@ class Widget:
     def _close(self):
         self._save_ui()
         self._stop.set()
+        # Cancel first: a callback already queued would otherwise fire into a
+        # destroyed interpreter, which Tk reports as "invalid command name".
+        for timer in self._timers.values():
+            with contextlib.suppress(tk.TclError):
+                self.root.after_cancel(timer)
+        self._timers.clear()
         if self.tray:
-            self.tray.stop()
+            self.tray.stop()  # blocks until the icon is gone and its thread ended
+        # Best effort: a worker still holding this object while Tk is torn down
+        # is how a Tcl handler ends up deleted from the wrong thread.
+        if self._worker_thread.is_alive():
+            self._worker_thread.join(1.0)
         self.root.destroy()
 
     def _pull_on_screen(self):
@@ -519,7 +532,7 @@ class Widget:
         except queue.Empty:
             pass
         if not self._stop.is_set():  # "Quit" from the tray destroys the window here
-            self.root.after(150, self._drain)
+            self._timers["drain"] = self.root.after(150, self._drain)
 
     def _tick(self):
         if self._stop.is_set():
@@ -538,7 +551,7 @@ class Widget:
             # and a widget stranded outside them all is indistinguishable from
             # one that never opened.
             self._pull_on_screen()
-        self.root.after(1000, self._tick)
+        self._timers["tick"] = self.root.after(1000, self._tick)
 
     # ── rendering ───────────────────────────────────────────────────────────
     def _render(self):

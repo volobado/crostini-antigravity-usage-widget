@@ -65,6 +65,11 @@ ERROR_CLASS_ALREADY_EXISTS = 1410
 
 ID_SHOW, ID_PIN, ID_REFRESH, ID_QUIT = 1, 2, 3, 4
 
+# Live icons, held here so that dropping the last reference to a Tray cannot
+# free the window procedure while Windows is still dispatching into it. That
+# collection is what an access violation on exit looks like from Python.
+_LIVE: set = set()
+
 
 class _NOTIFYICONDATA(ctypes.Structure):
     _fields_ = [
@@ -297,6 +302,7 @@ class Tray:
         self.labels = labels
         self.hwnd: int | None = None
         self.icon: wintypes.HICON | None = None
+        self._thread: threading.Thread | None = None
         self.pinned = True
         self.tip = "Lagrange"
         self.size = max(16, _user32.GetSystemMetrics(SM_CXSMICON))
@@ -309,13 +315,28 @@ class Tray:
 
     # ── lifecycle ───────────────────────────────────────────────────────────
     def start(self) -> bool:
-        threading.Thread(target=self._run, daemon=True, name="lagrange-tray").start()
+        _LIVE.add(self)
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name="lagrange-tray")
+        self._thread.start()
         self._ready.wait(timeout=5)
+        if not self._alive:
+            _LIVE.discard(self)
         return self._alive
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 3.0) -> None:
+        """
+        Take the icon down and wait for its thread to finish.
+
+        Waiting is the point: returning early would let the interpreter tear
+        down objects the window procedure is still being called through.
+        """
         if self.hwnd:
             _user32.PostMessageW(self.hwnd, WM_CLOSE, 0, 0)
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout)
+        self.hwnd = None
+        _LIVE.discard(self)
 
     def update(self, fraction: float | None, color: str, tip: str) -> None:
         """Redraw the gauge and retitle the icon. Safe from any thread."""
@@ -349,10 +370,15 @@ class Tray:
         self._ready.set()
 
         message = wintypes.MSG()
-        while _user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:
-            _user32.TranslateMessage(ctypes.byref(message))
-            _user32.DispatchMessageW(ctypes.byref(message))
-        self._alive = False
+        try:
+            while _user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:
+                _user32.TranslateMessage(ctypes.byref(message))
+                _user32.DispatchMessageW(ctypes.byref(message))
+        except OSError:
+            pass  # the desktop went away underneath us; nothing left to serve
+        finally:
+            self._alive = False
+            _LIVE.discard(self)
 
     def _create_window(self):
         instance = _kernel32.GetModuleHandleW(None)

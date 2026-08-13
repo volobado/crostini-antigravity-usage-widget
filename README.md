@@ -1,12 +1,14 @@
 <div align="center">
 
-# Lagrange
+# Lagrange Widget
 
 **Park where the pull is balanced.**
 
-Live quota meter and account switcher for [Antigravity CLI](https://antigravity.google) (`agy`).
-See what's left across every account at once — and switch between them without
-leaving the console you're working in.
+A desktop widget showing live quota, and an account switcher, for
+[Antigravity CLI](https://antigravity.google) (`agy`). It sits on top of your
+work, shrinks to a strip when you want it out of the way, and folds into the
+tray as a gauge you can read at a glance. See what is left across every account
+at once — and switch between them without leaving the console you are in.
 
 ![The Lagrange widget](docs/screenshot.png)
 
@@ -57,11 +59,25 @@ same credential entry `agy` actually reads.
 |---|---|
 | OS | Windows 10 or 11 — `agy` stores its token in Windows Credential Manager |
 | Python | 3.10+ with tkinter (the standard python.org installer includes it) |
-| Antigravity | `agy` installed and signed in. Verified against **1.1.11** |
+| Antigravity | `agy` installed and signed in. Verified against **1.1.12** |
 
 No third-party packages. Standard library only.
 
 ## Install
+
+Two downloads on the [releases page](https://github.com/Vovka666/lagrange/releases),
+neither of which needs Python:
+
+| | |
+|---|---|
+| `Lagrange-Widget-x.y.z-win-portable.exe` | One file. Put it anywhere and run it. |
+| `Lagrange-Widget-x.y.z-win-folder.zip` | Unzip and run `Lagrange Widget.exe` inside. Starts faster, since there is nothing to unpack at every launch. |
+
+Both are the same widget. Neither is signed, so SmartScreen will ask once —
+*More info → Run anyway* — and the single file, which unpacks itself into
+`%TEMP%` on each start, is the more likely of the two to bother an antivirus.
+
+Prefer to run it from source, or want the CLI as well:
 
 ```powershell
 git clone https://github.com/Vovka666/lagrange.git
@@ -84,21 +100,17 @@ start `agy` through `lagrange run`.
 Prefer pip? `pip install .` gives you `lagrange` and `lagrange-widget` on PATH.
 Without either, run everything through `bin\lagrange.cmd`.
 
-### A single .exe
-
-To carry the widget to a machine without Python:
+### Building the executables yourself
 
 ```powershell
 pip install pyinstaller
-python scripts\build_exe.py          # dist\Lagrange.exe — one file, ~11 MB
-python scripts\build_exe.py --onedir # a folder instead; starts faster
+python scripts\build_exe.py           # dist\Lagrange Widget.exe — one file, ~11 MB
+python scripts\build_exe.py --onedir  # a folder instead; starts faster
+python scripts\build_exe.py --release # both, named and staged in dist\release
 ```
 
 The executable is the widget only. The CLI stays a console program, because
 `lagrange run` has to have a console to start Antigravity in.
-
-Single-file builds are unsigned and unpack themselves into `%TEMP%`, which some
-antivirus products dislike on principle; `--onedir` avoids the unpacking.
 
 Verify:
 
@@ -217,7 +229,7 @@ When something does move, `lagrange doctor` says which layer:
 
 ```
 [ ok ] agy.exe                 C:\Users\you\AppData\Local\agy\bin\agy.exe
-                               version 1.1.11
+                               version 1.1.12
 [ ok ] credential entry        gemini:antigravity
 [ ok ] oauth client validated  id …tent.com (len 73) · secret …qDAf (len 35)
 [warn] quota endpoint          binary offers [...], config uses '...'

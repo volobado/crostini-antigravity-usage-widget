@@ -8,7 +8,7 @@ change, so it is possible to tell at a glance whether an upgrade is required.
 
 ## [1.1.0] — 2026-08-13
 
-Verified against Antigravity CLI **1.1.11**.
+Verified against Antigravity CLI **1.1.12**.
 
 ### Added
 
@@ -21,9 +21,14 @@ Verified against Antigravity CLI **1.1.11**.
   use: one line of identity and one bar per model group, showing that group's
   tightest window and its reset. Clicking it goes back to the full view. The
   choice is remembered.
-- **A portable executable.** `python scripts/build_exe.py` produces
-  `dist/Lagrange.exe` — one file, no console, no Python needed on the machine
-  that runs it. `--onedir` builds a folder instead, which starts faster.
+- **Two ready-to-run downloads**, neither needing Python: a single portable
+  `.exe`, and a folder build zipped, which starts faster because it has nothing
+  to unpack. `python scripts/build_exe.py --release` produces both.
+- **A window that cannot open where no monitor is.** A position saved on one
+  display arrangement used to be restored blindly onto another: the window
+  opened outside every screen, reported itself visible, and was never seen.
+  `screens.py` now moves it back into view — but only when no monitor shows any
+  part of it, so a window dragged half off an edge is left where it was put.
 - Hover labels on the title-bar buttons, which were previously bare glyphs.
 - A balloon the first time the widget hides itself, because Windows 11 files new
   tray icons under the overflow chevron and an icon nobody can find reads as a
@@ -35,11 +40,18 @@ Verified against Antigravity CLI **1.1.11**.
 
 ### Changed
 
+- The thing you download is called **Lagrange Widget**; the package, the CLI and
+  the repository stay `lagrange`.
 - The title bar is now 📌 pin, ▭ compact, ▁ hide to tray, ✕ quit. The old
   collapse-to-title-bar button is gone: compact does the same job and still
   shows the numbers.
-- Quitting from the tray, or with ✕, shuts the refresh loop down cleanly instead
-  of leaving a scheduled callback to fire into a destroyed window.
+- Quitting from the tray, or with ✕, shuts down in order: scheduled callbacks
+  cancelled, icon removed, its thread joined, then the window destroyed. Before,
+  the tray thread could be dispatching into a window procedure Python had
+  already collected — an access violation on the way out.
+- Launching Lagrange a second time re-opens a hidden window instead of only
+  raising a visible one, which is the way back when the tray icon is not where
+  you expect it.
 
 ## [1.0.0] — 2026-08-09
 
