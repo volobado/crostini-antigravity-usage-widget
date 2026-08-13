@@ -16,7 +16,7 @@ import threading
 import tkinter as tk
 from datetime import datetime, timezone
 
-from . import accounts, config, session
+from . import accounts, config, screens, session
 from . import tray as tray_module
 from .i18n import t
 from .i18n import window as window_label
@@ -278,6 +278,7 @@ class Widget:
         self.root.minsize(MIN_WIDTH, 32)
         self.root.deiconify()
         self.root.update_idletasks()
+        self._pull_on_screen()
 
     def _button(self, master, text, command, primary=False, small=False):
         bg = ACCENT if primary else CARD
@@ -411,6 +412,21 @@ class Widget:
             self.tray.stop()
         self.root.destroy()
 
+    def _pull_on_screen(self):
+        """
+        A saved position outlives the screen it was saved on. If no monitor
+        shows any part of the window, it is moved back into view — otherwise
+        the widget starts, reports itself visible, and is nowhere on the desk.
+        """
+        self.root.update_idletasks()
+        x, y = self.root.winfo_x(), self.root.winfo_y()
+        width = self.root.winfo_width() or MIN_WIDTH
+        height = self.root.winfo_height() or 120
+        moved_x, moved_y = screens.on_screen(x, y, width, height)
+        if (moved_x, moved_y) != (x, y):
+            self.root.geometry(f"+{moved_x}+{moved_y}")
+            self.ui_state["geometry"] = f"+{moved_x}+{moved_y}"
+
     def _save_ui(self):
         self.ui_state["geometry"] = f"+{self.root.winfo_x()}+{self.root.winfo_y()}"
         self.ui_state["expanded"] = sorted(self.expanded)
@@ -441,6 +457,7 @@ class Widget:
             self.root.update_idletasks()
             self.root.geometry(self.ui_state.get("geometry")
                                or f"+{self.root.winfo_x()}+{self.root.winfo_y()}")
+            self._pull_on_screen()  # the screen may have changed while it was away
             self.root.lift()
             self.root.attributes("-topmost", True)
             with contextlib.suppress(tk.TclError):
@@ -516,6 +533,11 @@ class Widget:
                 label.configure(text=human_left(reset))
         if not self.busy_text:
             self.status.configure(text=t("next_refresh", seconds=self.seconds_left))
+        if not self.hidden:
+            # Screens come and go — a remote session, an unplugged monitor —
+            # and a widget stranded outside them all is indistinguishable from
+            # one that never opened.
+            self._pull_on_screen()
         self.root.after(1000, self._tick)
 
     # ── rendering ───────────────────────────────────────────────────────────
