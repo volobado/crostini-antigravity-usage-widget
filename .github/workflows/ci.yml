@@ -29,7 +29,10 @@ jobs:
         # Nothing here touches the vault or the network at import time; if that
         # ever changes, this step is where it will show up.
         run: |
-          python -c "import lagrange, lagrange.api, lagrange.accounts, lagrange.config, lagrange.credstore, lagrange.discovery, lagrange.doctor, lagrange.i18n, lagrange.runner, lagrange.session, lagrange.ui; print(lagrange.__version__)"
+          python -c "import lagrange, lagrange.api, lagrange.accounts, lagrange.config, lagrange.credstore, lagrange.discovery, lagrange.doctor, lagrange.i18n, lagrange.runner, lagrange.session, lagrange.tray, lagrange.ui; print(lagrange.__version__)"
+
+      - name: The icon builds from code
+        run: python scripts/make_icon.py
 
       - name: CLI responds without an install
         run: |

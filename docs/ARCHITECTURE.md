@@ -112,6 +112,7 @@ accounts.py    account store, switching, offline refresh, state for the UI
 session.py     handshake between widget and wrapper; which console runs what
 runner.py      `lagrange run` — restarts agy in place after a switch
 ui.py          the Tkinter widget
+tray.py        notification-area icon and its message loop, via ctypes
 i18n.py        interface strings
 doctor.py      per-assumption diagnostics
 __main__.py    CLI
@@ -119,7 +120,40 @@ __main__.py    CLI
 
 Dependency direction is one way: `ui` and `runner` depend on `accounts`, which
 depends on `api`, `discovery` and `credstore`, all of which depend on `config`.
-Nothing depends on `ui`.
+`ui` also owns `tray`, which depends on nothing. Nothing depends on `ui`.
+
+## The tray
+
+Windows delivers notification-area callbacks to a window, and a window belongs
+to the thread that created it — so `tray.py` runs its own thread with its own
+message loop, and the only thing it does with an event is put a name on the
+queue the Tk loop already drains. Nothing outside that thread calls
+`Shell_NotifyIcon`, and nothing inside it touches Tk.
+
+Three details that are easy to get wrong:
+
+- **Not a message-only window.** `HWND_MESSAGE` windows are skipped by the
+  `TaskbarCreated` broadcast, so the icon would never return after an Explorer
+  restart. An ordinary window that is simply never shown does receive it.
+- **Every ctypes prototype is declared.** Without `restype`, ctypes assumes a C
+  int, and a 64-bit `HBITMAP` comes back truncated — `int too long to convert`
+  at best, a silently wrong handle at worst.
+- **The icon is drawn, not shipped.** `gauge_pixels` renders a ring filled
+  clockwise by the tightest remaining window, supersampled for anti-aliasing,
+  and the same function builds `assets/lagrange.ico` for the executable. One
+  mark, no binary asset in the repository.
+
+If the tray cannot start, the widget simply does not offer to hide: a borderless
+window has no taskbar button either, and a widget you cannot get back is worse
+than one that is always on screen.
+
+## Packaging
+
+`scripts/build_exe.py` freezes `scripts/widget_entry.py` with PyInstaller into a
+single windowed executable. PyInstaller is a build-time tool only — the widget
+itself still imports nothing outside the standard library. The CLI stays a
+console program installed with pip: `lagrange run` needs a console to run
+Antigravity in, which a windowed executable does not have.
 
 ## Two truths about "the current account"
 

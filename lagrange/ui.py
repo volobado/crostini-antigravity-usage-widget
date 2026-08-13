@@ -17,6 +17,7 @@ import tkinter as tk
 from datetime import datetime, timezone
 
 from . import accounts, config, session
+from . import tray as tray_module
 from .i18n import t
 from .i18n import window as window_label
 
@@ -113,6 +114,54 @@ class Singleton:
             pass
 
 
+class Tooltip:
+    """
+    Hover label for the title-bar glyphs.
+
+    The buttons are single characters with no room for words, and a pin that
+    nobody recognises is a pin nobody uses.
+    """
+
+    def __init__(self, widget, text: str):
+        self.widget, self.text = widget, text
+        self.window: tk.Toplevel | None = None
+        self.timer: str | None = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<Button-1>", self._hide, add="+")
+
+    def _schedule(self, _event=None):
+        self._cancel()
+        self.timer = self.widget.after(450, self._show)
+
+    def _cancel(self):
+        if self.timer:
+            with contextlib.suppress(tk.TclError):
+                self.widget.after_cancel(self.timer)
+            self.timer = None
+
+    def _show(self):
+        if self.window or not self.widget.winfo_viewable():
+            return
+        self.window = tk.Toplevel(self.widget)
+        self.window.overrideredirect(True)
+        self.window.attributes("-topmost", True)
+        tk.Label(self.window, text=self.text, bg=CARD_ACTIVE, fg=TEXT, font=F_TINY,
+                 padx=6, pady=3, highlightbackground=BORDER,
+                 highlightthickness=1).pack()
+        x = self.widget.winfo_rootx() + self.widget.winfo_width() // 2
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        self.window.update_idletasks()
+        self.window.geometry(f"+{x - self.window.winfo_reqwidth() // 2}+{y}")
+
+    def _hide(self, _event=None):
+        self._cancel()
+        if self.window:
+            with contextlib.suppress(tk.TclError):
+                self.window.destroy()
+            self.window = None
+
+
 class Bar(tk.Frame):
     """Remaining-quota bar."""
 
@@ -144,9 +193,13 @@ class Widget:
         self.countdowns: list[tuple[tk.Label, datetime]] = []
         self.refresh_seconds = int(config.get("refresh_seconds"))
         self.seconds_left = self.refresh_seconds
-        self.collapsed = False
+        self.compact = bool(self.ui_state.get("compact", False))
+        self.hidden = False
         self._width = MIN_WIDTH
         self._stop = threading.Event()
+
+        # Before the window: whether the tray took means whether hiding is offered.
+        self.tray = self._start_tray()
 
         self._build()
         threading.Thread(target=self._worker, daemon=True).start()
@@ -176,17 +229,25 @@ class Widget:
         caption = tk.Label(titlebar, text=t("title"), bg=BG, fg=TEXT, font=F_TITLE)
         caption.pack(side="left", padx=(12, 0))
 
-        for text, command, name in (("✕", self._close, "close"),
-                                    ("─", self._toggle_collapse, "collapse"),
-                                    ("📌", self._toggle_pin, "pin")):
+        # Packed right to left, so this reads 📌 ▭ ▁ ✕ on screen.
+        buttons = [("✕", self._close, "close", t("tip_close"))]
+        if self.tray:
+            buttons.append(("▁", self._hide_to_tray, "tray", t("tip_tray")))
+        buttons.append(("▭", self._toggle_compact, "compact", t("tip_compact")))
+        buttons.append(("📌", self._toggle_pin, "pin", t("tip_pin")))
+
+        for text, command, name, tip in buttons:
             button = tk.Label(titlebar, text=text, bg=BG, fg=MUTED, font=F_MAIN,
                               cursor="hand2", padx=8)
             button.pack(side="right")
             button.bind("<Button-1>", lambda _e, c=command: c())
             button.bind("<Enter>", lambda e: e.widget.configure(fg=TEXT))
             button.bind("<Leave>", lambda e: e.widget.configure(fg=MUTED))
+            hint = Tooltip(button, tip)
             if name == "pin":
                 self.pin_button = button
+            elif name == "compact":
+                self.compact_button, self.compact_tip = button, hint
 
         for widget in (titlebar, caption):
             widget.bind("<Button-1>", self._drag_start)
@@ -197,14 +258,15 @@ class Widget:
         self.content = tk.Frame(self.body, bg=BG)
         self.content.pack(fill="both", expand=True, padx=8, pady=(2, 0))
 
-        footer = tk.Frame(self.body, bg=BG, height=34)
-        footer.pack(fill="x", padx=8, pady=(4, 8))
-        self._button(footer, t("add_account"), self._add_account, primary=True).pack(side="left")
+        self.footer = tk.Frame(self.body, bg=BG, height=34)
+        self.footer.pack(fill="x", padx=8, pady=(4, 8))
+        self._button(self.footer, t("add_account"), self._add_account,
+                     primary=True).pack(side="left")
 
-        self.status = tk.Label(footer, text="", bg=BG, fg=DIM, font=F_SMALL)
+        self.status = tk.Label(self.footer, text="", bg=BG, fg=DIM, font=F_SMALL)
         self.status.pack(side="right", padx=(0, 4))
 
-        refresh = tk.Label(footer, text="⟳", bg=BG, fg=MUTED, font=F_MAIN,
+        refresh = tk.Label(self.footer, text="⟳", bg=BG, fg=MUTED, font=F_MAIN,
                            cursor="hand2", padx=6)
         refresh.pack(side="right")
         refresh.bind("<Button-1>", lambda _e: self._request("refresh"))
@@ -212,6 +274,7 @@ class Widget:
         refresh.bind("<Leave>", lambda e: e.widget.configure(fg=MUTED))
 
         self._sync_pin()
+        self._sync_compact()
         self.root.minsize(MIN_WIDTH, 32)
         self.root.deiconify()
         self.root.update_idletasks()
@@ -245,19 +308,102 @@ class Widget:
         self._save_ui()
 
     def _sync_pin(self):
-        self.pin_button.configure(fg=ACCENT if self.root.attributes("-topmost") else DIM)
+        pinned = bool(self.root.attributes("-topmost"))
+        self.pin_button.configure(fg=ACCENT if pinned else DIM)
+        if self.tray:
+            self.tray.set_pinned(pinned)
 
-    def _toggle_collapse(self):
-        self.collapsed = not self.collapsed
-        if self.collapsed:
-            self.body.pack_forget()
+    def _toggle_compact(self):
+        self.compact = not self.compact
+        self.ui_state["compact"] = self.compact
+        self._sync_compact()
+        self._save_ui()
+        self._render()
+
+    def _sync_compact(self):
+        """
+        Compact keeps the one thing worth glancing at — the active account —
+        and drops the footer, the countdown and every other account with it.
+        """
+        self.compact_button.configure(text="▤" if self.compact else "▭",
+                                      fg=ACCENT if self.compact else MUTED)
+        self.compact_tip.text = t("tip_expand") if self.compact else t("tip_compact")
+        if self.compact:
+            self.footer.pack_forget()
+            self._width = MIN_WIDTH  # stop the wide layout from sticking
         else:
-            self.body.pack(fill="both", expand=True)
-        self._fit()
+            self.footer.pack(fill="x", padx=8, pady=(4, 8))
+
+    # ── tray ────────────────────────────────────────────────────────────────
+    def _start_tray(self):
+        labels = {"show": t("tray_show"), "pin": t("tray_pin"),
+                  "refresh": t("tray_refresh"), "quit": t("tray_quit")}
+        icon = tray_module.Tray(lambda name: self.results.put(("tray", name)), labels)
+        icon.set_pinned(bool(self.ui_state.get("pinned", True)))
+        # No tray, no hiding: a borderless window has no taskbar button either,
+        # and a widget you cannot get back is worse than one always on screen.
+        return icon if icon.start() else None
+
+    def _hide_to_tray(self):
+        if not self.tray:
+            return
+        self._save_ui()
+        self.hidden = True
+        self.root.withdraw()
+
+    def _on_tray(self, name: str):
+        if name == "show":
+            self.raise_window()
+        elif name == "pin":
+            self._toggle_pin()
+        elif name == "refresh":
+            self._request("refresh")
+        elif name == "quit":
+            self._close()
+
+    def _sync_tray(self):
+        """Redraw the icon as a gauge of the tightest window in play."""
+        if not self.tray:
+            return
+        account = self._active_account()
+        if account is None or account.get("error"):
+            detail = (account or {}).get("error") or ""
+            tip = f"{account['email']} — {detail}" if account else t("tray_tip_signed_out")
+            self.tray.update(0.0, MUTED, tip[:127])
+            return
+
+        values, lines = [], [account["email"]]
+        for group in account["groups"]:
+            parts = []
+            for bucket in group["buckets"]:
+                remaining = bucket["remaining"]
+                if remaining is None:
+                    continue
+                values.append(remaining)
+                parts.append(f"{window_label(bucket['window'], bucket['window_label'])} "
+                             f"{remaining * 100:.0f}%")
+            if parts:
+                lines.append(f"{group['name']}: " + " · ".join(parts))
+        worst = min(values) if values else None
+        self.tray.update(worst, MUTED if worst is None else bar_color(worst),
+                         "\n".join(lines)[:127])
+
+    def _active_account(self) -> dict | None:
+        if not self.state or not self.state["accounts"]:
+            return None
+        for account in self.state["accounts"]:
+            if account["running"]:
+                return account
+        for account in self.state["accounts"]:
+            if account["loaded"]:
+                return account
+        return self.state["accounts"][0]
 
     def _close(self):
         self._save_ui()
         self._stop.set()
+        if self.tray:
+            self.tray.stop()
         self.root.destroy()
 
     def _save_ui(self):
@@ -267,6 +413,7 @@ class Widget:
 
     def raise_window(self):
         def show():
+            self.hidden = False
             self.root.deiconify()
             self.root.lift()
             self.root.attributes("-topmost", True)
@@ -315,16 +462,23 @@ class Widget:
                     self.state = payload
                     self.busy_text = None
                     self.seconds_left = self.refresh_seconds
+                    self._sync_tray()
                 elif kind == "banner":
                     self.banner = payload
                 elif kind == "idle":
                     self.busy_text = None
+                elif kind == "tray":
+                    self._on_tray(payload)
+                    continue
                 self._render()
         except queue.Empty:
             pass
-        self.root.after(150, self._drain)
+        if not self._stop.is_set():  # "Quit" from the tray destroys the window here
+            self.root.after(150, self._drain)
 
     def _tick(self):
+        if self._stop.is_set():
+            return
         self.seconds_left -= 1
         if self.seconds_left <= 0 and not self.busy_text:
             self.seconds_left = self.refresh_seconds
@@ -353,6 +507,8 @@ class Widget:
 
         if not self.state["accounts"]:
             self._render_empty()
+        elif self.compact:
+            self._render_compact_view()
         else:
             for account in self.state["accounts"]:
                 self._render_account(account)
@@ -367,13 +523,18 @@ class Widget:
         to the window manager and the window jumps away from where it was put.
 
         Width is floored at MIN_WIDTH because the title bar has size propagation
-        switched off — collapsed, it asks for almost no width at all, and the
-        window would shrink to a strip too narrow to click.
+        switched off — with little in the body it asks for almost no width at
+        all, and the window would shrink to a strip too narrow to click.
+
+        In the full view the widest layout so far is kept, so the window stops
+        twitching sideways as accounts expand and collapse. Compact starts over
+        from its own natural width instead of inheriting that.
         """
         self.root.update_idletasks()
         x, y = self.root.winfo_x(), self.root.winfo_y()
-        width = max(self.root.winfo_reqwidth(), MIN_WIDTH, self._width)
-        if not self.collapsed:
+        width = max(self.root.winfo_reqwidth(), MIN_WIDTH)
+        if not self.compact:
+            width = max(width, self._width)
             self._width = width
         self.root.geometry(f"{width}x{self.root.winfo_reqheight()}+{x}+{y}")
 
@@ -533,6 +694,58 @@ class Widget:
             countdown.pack(side="right")
             if bucket["reset"]:
                 self.countdowns.append((countdown, bucket["reset"]))
+
+    def _render_compact_view(self):
+        """
+        The whole widget shrunk to the account actually in use: one line of
+        identity, one bar per model group, showing that group's tightest window.
+        Clicking anywhere in it goes back to the full view.
+        """
+        account = self._active_account()
+        if account is None:
+            self._render_empty()
+            return
+
+        box = tk.Frame(self.content, bg=CARD_ACTIVE, highlightbackground=ACCENT,
+                       highlightthickness=1)
+        box.pack(fill="x", pady=(2, 4))
+
+        header = tk.Frame(box, bg=CARD_ACTIVE, cursor="hand2")
+        header.pack(fill="x", padx=10, pady=(6, 2))
+        tk.Label(header, text="●", bg=CARD_ACTIVE, fg=ACCENT, font=F_TINY).pack(side="left")
+        tk.Label(header, text=account["email"], bg=CARD_ACTIVE, fg=TEXT,
+                 font=F_MAIN).pack(side="left", padx=(6, 0))
+
+        if account["error"]:
+            tk.Label(box, text=t("revoked") if account["error"] == "reauth"
+                     else account["error"], bg=CARD_ACTIVE, fg=AMBER, font=F_SMALL,
+                     wraplength=280, justify="left").pack(anchor="w", padx=10, pady=(0, 8))
+        else:
+            for group in account["groups"]:
+                values = [(b["remaining"], b) for b in group["buckets"]
+                          if b["remaining"] is not None]
+                if not values:
+                    continue
+                worst, bucket = min(values, key=lambda pair: pair[0])
+                row = tk.Frame(box, bg=CARD_ACTIVE)
+                row.pack(fill="x", padx=10, pady=1)
+                tk.Label(row, text=group["name"], bg=CARD_ACTIVE, fg=MUTED, font=F_SMALL,
+                         width=11, anchor="w").pack(side="left")
+                bar = Bar(row, width=104)
+                bar.pack(side="left", padx=(0, 8))
+                bar.set(worst)
+                tk.Label(row, text=f"{worst * 100:.0f}%", bg=CARD_ACTIVE,
+                         fg=bar_color(worst), font=F_TITLE, width=5,
+                         anchor="e").pack(side="left")
+                countdown = tk.Label(row, text=human_left(bucket["reset"]), bg=CARD_ACTIVE,
+                                     fg=DIM, font=F_TINY, width=8, anchor="e")
+                countdown.pack(side="right")
+                if bucket["reset"]:
+                    self.countdowns.append((countdown, bucket["reset"]))
+            tk.Frame(box, bg=CARD_ACTIVE, height=5).pack()
+
+        for widget in (box, header, *header.winfo_children()):
+            widget.bind("<Button-1>", lambda _e: self._toggle_compact())
 
     def _render_compact(self, card, account: dict, bg: str):
         """Collapsed card: one row per group, showing its tightest window."""

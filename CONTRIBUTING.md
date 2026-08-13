@@ -50,8 +50,8 @@ widget, `/exit`, and confirm two things — the newest log in
 `~/.gemini/antigravity-cli/log/` shows `applyAuthResult` with the new address,
 and **no new console window appeared**.
 
-If you touched the widget, check it collapsed as well as expanded, and with a
-fresh profile (no `~/.lagrange/ui.json`).
+If you touched the widget, check it compact as well as full, hidden to the tray
+and brought back, and with a fresh profile (no `~/.lagrange/ui.json`).
 
 Regenerate the documentation screenshot with fabricated accounts — never a real
 one:

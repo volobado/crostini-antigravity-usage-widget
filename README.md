@@ -43,6 +43,9 @@ same credential entry `agy` actually reads.
 - **Switching that doesn't cost you your session.** Run `agy` through
   `lagrange run` and a switch takes effect in the **same console**, resuming the
   same conversation. No second window, no lost scrollback.
+- **Out of the way when you want it.** Compact mode shrinks it to the account in
+  use; the tray icon is itself a gauge of your tightest window, so you can close
+  the widget and still see where you stand.
 - **Nothing in the clear.** Every account's token lives in Windows Credential
   Manager. On disk Lagrange keeps only email addresses and window position.
 - **Says when it breaks.** `lagrange doctor` checks every assumption
@@ -81,6 +84,22 @@ start `agy` through `lagrange run`.
 Prefer pip? `pip install .` gives you `lagrange` and `lagrange-widget` on PATH.
 Without either, run everything through `bin\lagrange.cmd`.
 
+### A single .exe
+
+To carry the widget to a machine without Python:
+
+```powershell
+pip install pyinstaller
+python scripts\build_exe.py          # dist\Lagrange.exe — one file, ~11 MB
+python scripts\build_exe.py --onedir # a folder instead; starts faster
+```
+
+The executable is the widget only. The CLI stays a console program, because
+`lagrange run` has to have a console to start Antigravity in.
+
+Single-file builds are unsigned and unpack themselves into `%TEMP%`, which some
+antivirus products dislike on principle; `--onedir` avoids the unpacking.
+
 Verify:
 
 ```
@@ -95,13 +114,30 @@ it. Running it twice raises the existing window rather than opening a second.
 | | |
 |---|---|
 | 📌 | Keep on top (remembered) |
-| ─ | Collapse to the title bar |
+| ▭ | Compact: just the account in use, one bar per model group |
+| ▁ | Hide to the tray |
+| ✕ | Quit |
 | click a collapsed card | Expand that account |
 | **Switch** | Load that account into Antigravity |
 | **+ Add account** | Sign in through the browser; the active account is untouched |
 | ⟳ | Refresh now (otherwise every 60 s) |
 
 Bars are green above 50 %, amber from 20 to 50 %, red below.
+
+Compact keeps the account in use and its two model groups, each showing whichever
+window is tightest:
+
+![Lagrange, compact](docs/screenshot-compact.png)
+
+### From the tray
+
+Hidden, Lagrange keeps refreshing, and its icon is the gauge: a ring filled to
+your tightest remaining window, in the same three colours. Hover for every
+number, click to bring the widget back, right-click for Show, **Always on top**,
+**Refresh now** and **Quit**.
+
+Windows 11 files new tray icons under the `^` chevron — drag it onto the taskbar
+once to keep it visible.
 
 ### Switching in the same console
 
