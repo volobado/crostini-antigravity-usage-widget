@@ -358,7 +358,7 @@ class Widget:
 
     def _on_tray(self, name: str):
         if name == "show":
-            self.raise_window()
+            self._show_window()
         elif name == "pin":
             self._toggle_pin()
         elif name == "refresh":
@@ -417,6 +417,17 @@ class Widget:
         accounts.save_ui_state(self.ui_state)
 
     def raise_window(self):
+        """
+        Bring the window back — callable from any thread.
+
+        The singleton listener calls this from its own thread when a second
+        launch pokes it, which is also the way back when the tray icon is not
+        where the user expects it: running the shortcut again re-opens the
+        window instead of doing nothing.
+        """
+        self.results.put(("tray", "show"))
+
+    def _show_window(self):
         """
         Come back where it was, in front, whatever asked for it.
 
