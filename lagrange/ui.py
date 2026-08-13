@@ -347,9 +347,14 @@ class Widget:
     def _hide_to_tray(self):
         if not self.tray:
             return
-        self._save_ui()
+        # Once, on the first hide: an icon nobody can find reads as a crash.
+        first_time = not self.ui_state.get("tray_hint_shown")
+        self.ui_state["tray_hint_shown"] = True
+        self._save_ui()  # geometry, while the window still reports it
         self.hidden = True
         self.root.withdraw()
+        if first_time:
+            self.tray.notify(t("title").replace(" ", ""), t("tray_hint"))
 
     def _on_tray(self, name: str):
         if name == "show":
@@ -412,13 +417,25 @@ class Widget:
         accounts.save_ui_state(self.ui_state)
 
     def raise_window(self):
+        """
+        Come back where it was, in front, whatever asked for it.
+
+        Coming back unpinned behind a maximised console is indistinguishable
+        from not coming back at all, so the window is forced to the top for a
+        few seconds even when the pin is off.
+        """
         def show():
             self.hidden = False
             self.root.deiconify()
+            self.root.update_idletasks()
+            self.root.geometry(self.ui_state.get("geometry")
+                               or f"+{self.root.winfo_x()}+{self.root.winfo_y()}")
             self.root.lift()
             self.root.attributes("-topmost", True)
+            with contextlib.suppress(tk.TclError):
+                self.root.focus_force()
             if not self.ui_state.get("pinned", True):
-                self.root.after(1200, lambda: self.root.attributes("-topmost", False))
+                self.root.after(4000, lambda: self.root.attributes("-topmost", False))
         self.root.after(0, show)
 
     # ── background work ─────────────────────────────────────────────────────

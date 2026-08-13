@@ -36,14 +36,22 @@ WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT,
 WM_DESTROY = 0x0002
 WM_CLOSE = 0x0010
 WM_COMMAND = 0x0111
+WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
 WM_LBUTTONDBLCLK = 0x0203
 WM_RBUTTONUP = 0x0205
+WM_MBUTTONUP = 0x0208
 WM_APP = 0x8000
+# Sent instead of the raw mouse messages when an icon asks for version 4.
+NIN_SELECT = WM_APP + 0
+NIN_KEYSELECT = WM_APP + 1
 WM_TRAY = WM_APP + 17
+WM_TRAY_REDRAW = WM_APP + 18
+WM_TRAY_BALLOON = WM_APP + 19
 
-NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
-NIF_MESSAGE, NIF_ICON, NIF_TIP = 0x01, 0x02, 0x04
+NIM_ADD, NIM_MODIFY, NIM_DELETE, NIM_SETVERSION = 0, 1, 2, 4
+NIF_MESSAGE, NIF_ICON, NIF_TIP, NIF_INFO = 0x01, 0x02, 0x04, 0x10
+NIIF_INFO = 0x01
 
 MF_STRING, MF_SEPARATOR, MF_CHECKED = 0x0000, 0x0800, 0x0008
 TPM_RIGHTBUTTON, TPM_RETURNCMD, TPM_NONOTIFY = 0x0002, 0x0100, 0x0080
@@ -297,6 +305,7 @@ class Tray:
         self._wndproc = WNDPROC(self._handle)  # must outlive the window
         self._taskbar_created = _user32.RegisterWindowMessageW("TaskbarCreated")
         self._pending = (0.0, "#6d8cff", "Lagrange")
+        self._balloon: tuple[str, str] | None = None
 
     # ── lifecycle ───────────────────────────────────────────────────────────
     def start(self) -> bool:
@@ -312,7 +321,17 @@ class Tray:
         """Redraw the gauge and retitle the icon. Safe from any thread."""
         self._pending = (0.0 if fraction is None else fraction, color, tip)
         if self.hwnd:
-            _user32.PostMessageW(self.hwnd, WM_APP + 18, 0, 0)
+            _user32.PostMessageW(self.hwnd, WM_TRAY_REDRAW, 0, 0)
+
+    def notify(self, title: str, text: str) -> None:
+        """
+        Balloon over the icon. Windows 11 files new icons under the overflow
+        chevron, so the first time the widget hides itself it has to say where
+        it went — otherwise it just looks closed.
+        """
+        self._balloon = (title[:63], text[:255])
+        if self.hwnd:
+            _user32.PostMessageW(self.hwnd, WM_TRAY_BALLOON, 0, 0)
 
     def set_pinned(self, pinned: bool) -> None:
         self.pinned = pinned
@@ -375,6 +394,17 @@ class Tray:
                                                                   | NIF_TIP))):
             raise ctypes.WinError(ctypes.get_last_error())
 
+    def _show_balloon(self):
+        if not self._balloon:
+            return
+        title, text = self._balloon
+        data = self._data(NIF_INFO)
+        data.szInfoTitle = title
+        data.szInfo = text
+        data.dwInfoFlags = NIIF_INFO
+        _shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(data))
+        self._balloon = None
+
     def _refresh_icon(self):
         fraction, color, tip = self._pending
         self.tip = tip
@@ -411,7 +441,11 @@ class Tray:
     def _handle(self, hwnd, message, wparam, lparam):
         if message == WM_TRAY:
             event = lparam & 0xFFFF
-            if event in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
+            # Every flavour of left click restores. Which of down/up/double the
+            # shell forwards has changed between Windows versions, and firing
+            # twice is harmless — the window is simply already back.
+            if event in (WM_LBUTTONDOWN, WM_LBUTTONUP, WM_LBUTTONDBLCLK,
+                         WM_MBUTTONUP, NIN_SELECT, NIN_KEYSELECT):
                 self.on_event("show")
             elif event == WM_RBUTTONUP:
                 choice = self._menu()
@@ -420,8 +454,11 @@ class Tray:
                 if name:
                     self.on_event(name)
             return 0
-        if message == WM_APP + 18:
+        if message == WM_TRAY_REDRAW:
             self._refresh_icon()
+            return 0
+        if message == WM_TRAY_BALLOON:
+            self._show_balloon()
             return 0
         if message == self._taskbar_created:
             # Explorer restarted and forgot every icon; put ours back.

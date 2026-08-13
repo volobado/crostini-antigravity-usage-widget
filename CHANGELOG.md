@@ -25,6 +25,11 @@ Verified against Antigravity CLI **1.1.11**.
   `dist/Lagrange.exe` — one file, no console, no Python needed on the machine
   that runs it. `--onedir` builds a folder instead, which starts faster.
 - Hover labels on the title-bar buttons, which were previously bare glyphs.
+- A balloon the first time the widget hides itself, because Windows 11 files new
+  tray icons under the overflow chevron and an icon nobody can find reads as a
+  crash. Restoring also forces the window to the front for a few seconds even
+  when the pin is off — coming back behind a maximised console is
+  indistinguishable from not coming back.
 - `scripts/make_icon.py` builds `assets/lagrange.ico` from the same code that
   draws the tray gauge, so there is no binary icon in the repository.
 
