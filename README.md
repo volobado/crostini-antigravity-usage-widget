@@ -88,7 +88,7 @@ No third-party packages. Standard library only.
 
 ## Install
 
-Two downloads on the [releases page](https://github.com/Vovka666/antigravity-gemini-usage/releases),
+Two downloads on the [releases page](https://github.com/Vovka666/antigravity-gemini-usage-widget/releases),
 neither of which needs Python:
 
 | | |
@@ -103,8 +103,8 @@ Both are the same widget. Neither is signed, so SmartScreen will ask once —
 Prefer to run it from source, or want the CLI as well:
 
 ```powershell
-git clone https://github.com/Vovka666/antigravity-gemini-usage.git
-cd antigravity-gemini-usage
+git clone https://github.com/Vovka666/antigravity-gemini-usage-widget.git
+cd antigravity-gemini-usage-widget
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 

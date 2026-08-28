@@ -1,8 +1,8 @@
 blank_issues_enabled: true
 contact_links:
   - name: How it works
-    url: https://github.com/Vovka666/antigravity-gemini-usage/blob/main/docs/ARCHITECTURE.md
+    url: https://github.com/Vovka666/antigravity-gemini-usage-widget/blob/main/docs/ARCHITECTURE.md
     about: What Lagrange assumes about Antigravity, and how each assumption was established.
   - name: Something broke after an Antigravity update
-    url: https://github.com/Vovka666/antigravity-gemini-usage/blob/main/docs/COMPATIBILITY.md
+    url: https://github.com/Vovka666/antigravity-gemini-usage-widget/blob/main/docs/COMPATIBILITY.md
     about: Every failure `lagrange doctor` can report, and how to patch it yourself.
