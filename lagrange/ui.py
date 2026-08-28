@@ -278,7 +278,7 @@ class Starfield(tk.Canvas):
     SWEEP_EVERY_MS = 12000
     SWEEP_STEP_MS = 40
 
-    def __init__(self, master, height: int = 32, title: str = "",
+    def __init__(self, master, height: int = 32, title: tuple[str, ...] = (),
                  subtitle: tuple[str, ...] = ()):
         # width=1: a Tk canvas asks for 378 pixels by default, which would set
         # the floor for the whole window and make compact mode anything but.
@@ -324,11 +324,25 @@ class Starfield(tk.Canvas):
                 # green reads as a glow behind the letters. On the canvas rather
                 # than in a label, because a label would bring an opaque
                 # rectangle and paint out the sky it is standing in.
+                #
+                # A spaced-out wordmark is wide, and compact mode is not, so the
+                # name comes as candidates: the widest that fits is kept, and
+                # each one is measured rather than guessed at.
                 middle = height // 2
-                self.create_text(13, middle + 1, text=self._title, anchor="w",
-                                 fill=mix(VOID, NEON, 0.7), font=F_BRAND, tags="brand")
-                mark = self.create_text(12, middle, text=self._title, anchor="w",
-                                        fill=TEXT, font=F_BRAND, tags="brand")
+                mark = None
+                for text in self._title:
+                    glow = self.create_text(13, middle + 1, text=text, anchor="w",
+                                            fill=mix(VOID, NEON, 0.7), font=F_BRAND,
+                                            tags="brand")
+                    mark = self.create_text(12, middle, text=text, anchor="w",
+                                            fill=TEXT, font=F_BRAND, tags="brand")
+                    if self.bbox(mark)[2] <= width - 6:
+                        break
+                    self.delete(glow)
+                    self.delete(mark)
+                    mark = None
+                if mark is None:
+                    return
                 # What this Lagrange is. Measured rather than estimated: each
                 # candidate is drawn, and dropped again if its right edge lands
                 # past the canvas — the longest one that fits stays, and in
@@ -549,7 +563,8 @@ class Widget:
         titlebar.pack(fill="x")
         titlebar.pack_propagate(False)
 
-        self.sky = Starfield(titlebar, height=32, title=t("title"),
+        self.sky = Starfield(titlebar, height=32,
+                             title=(t("title"), t("title_short"), t("title_min")),
                              subtitle=(t("subtitle"), t("subtitle_short")))
         self.sky.pack(side="left", fill="both", expand=True)
 

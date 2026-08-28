@@ -6,6 +6,20 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 Entries under **Compatibility** name the Antigravity version that forced the
 change, so it is possible to tell at a glance whether an upgrade is required.
 
+## [1.2.2] — 2026-08-28
+
+### Changed
+
+- **The title bar names what is being measured, not what is measuring it.** The
+  wordmark now reads `A N T I G R A V I T Y` with a small `usage` beside it. On
+  a desk running this and its Claude Code sibling side by side, "Antigravity"
+  against "Claude" is the distinction that matters, and "Lagrange" — the same
+  word on both — was not one. The product keeps its name everywhere else: the
+  window title, the tray, the shortcut, the executable.
+- The wordmark comes in three lengths and the title bar takes the widest that
+  fits, measured rather than guessed: spaced-out in the full view, plain
+  `ANTIGRAVITY` in compact, `AGY` if a window is dragged narrower still.
+
 ## [1.2.1] — 2026-08-28
 
 ### Changed

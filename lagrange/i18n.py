@@ -20,9 +20,15 @@ STRINGS: dict[str, dict[str, str]] = {
         # everywhere a person meets it outside the window: the taskbar, the tray
         # balloon, the shortcut. "Lagrange" alone is a word the world already
         # owns — the rest of the name is what says which Lagrange this is.
-        "title": "L A G R A N G E",
-        "subtitle": "Gemini CLI (agy) usage",
-        "subtitle_short": "agy usage",
+        # The wordmark names the tool being measured, not the tool doing the
+        # measuring: on a desk with both widgets open, "Antigravity" and
+        # "Claude" is the distinction that matters, and "Lagrange" is not.
+        # Three lengths, longest first — the title bar takes the widest that fits.
+        "title": "A N T I G R A V I T Y",
+        "title_short": "ANTIGRAVITY",
+        "title_min": "AGY",
+        "subtitle": "usage",
+        "subtitle_short": "usage",
         "product": "Lagrange - Gemini CLI (agy) Usage",
         "active": "ACTIVE",
         "running": "RUNNING",
@@ -85,9 +91,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "date_short": "{month} {day}",
     },
     "ru": {
-        "title": "L A G R A N G E",
-        "subtitle": "расход Gemini CLI (agy)",
-        "subtitle_short": "расход agy",
+        "title": "A N T I G R A V I T Y",
+        "title_short": "ANTIGRAVITY",
+        "title_min": "AGY",
+        "subtitle": "расход",
+        "subtitle_short": "расход",
         "product": "Lagrange - Gemini CLI (agy) Usage",
         "active": "АКТИВЕН",
         "running": "РАБОТАЕТ",

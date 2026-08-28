@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lagrange-agy"
-version = "1.2.1"
+version = "1.2.2"
 description = "Lagrange - Gemini CLI (agy) Usage: live quota, token and context meter, and account switcher, for Antigravity CLI (agy)"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -7,7 +7,7 @@ Live quota, token and context meter, and account switcher, for Antigravity CLI
 Park where the pull is balanced.
 """
 
-__version__ = "1.2.1"
+__version__ = "1.2.2"
 
 # Antigravity build this release was developed and verified against. Shown by
 # `lagrange doctor` so a compatibility report always carries both numbers.
