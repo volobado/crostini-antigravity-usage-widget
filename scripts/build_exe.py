@@ -52,12 +52,12 @@ VSVersionInfo(
   kids=[
     StringFileInfo([StringTable('040904B0', [
       StringStruct('CompanyName', 'Volo Bado'),
-      StringStruct('FileDescription', 'Lagrange Widget - live quota meter for Antigravity CLI'),
+      StringStruct('FileDescription', 'Lagrange - Gemini CLI (agy) Usage'),
       StringStruct('FileVersion', '{version}'),
       StringStruct('InternalName', 'LagrangeWidget'),
       StringStruct('LegalCopyright', 'MIT licensed'),
       StringStruct('OriginalFilename', 'Lagrange Widget.exe'),
-      StringStruct('ProductName', 'Lagrange Widget'),
+      StringStruct('ProductName', 'Lagrange - Gemini CLI (agy) Usage'),
       StringStruct('ProductVersion', '{version}')])]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
   ]

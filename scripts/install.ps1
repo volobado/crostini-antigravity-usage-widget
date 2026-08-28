@@ -23,7 +23,7 @@
 param(
     [string[]] $Launchers = @(),
     [switch]   $NoShortcut,
-    [string]   $ShortcutName = "Lagrange"
+    [string]   $ShortcutName = "Lagrange - Gemini CLI (agy) Usage"
 )
 
 $ErrorActionPreference = "Stop"

@@ -304,13 +304,13 @@ class Tray:
         self.icon: wintypes.HICON | None = None
         self._thread: threading.Thread | None = None
         self.pinned = True
-        self.tip = "Lagrange"
+        self.tip = "Lagrange - Gemini CLI (agy) Usage"
         self.size = max(16, _user32.GetSystemMetrics(SM_CXSMICON))
         self._ready = threading.Event()
         self._alive = False
         self._wndproc = WNDPROC(self._handle)  # must outlive the window
         self._taskbar_created = _user32.RegisterWindowMessageW("TaskbarCreated")
-        self._pending = (0.0, "#6d8cff", "Lagrange")
+        self._pending = (0.0, "#6d8cff", "Lagrange - Gemini CLI (agy) Usage")
         self._balloon: tuple[str, str] | None = None
 
     # ── lifecycle ───────────────────────────────────────────────────────────

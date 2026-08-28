@@ -1,17 +1,28 @@
 <div align="center">
 
-# Lagrange Widget
+# Lagrange - Gemini CLI (agy) Usage
 
 **Park where the pull is balanced.**
 
-A desktop widget showing live quota, and an account switcher, for
-[Antigravity CLI](https://antigravity.google) (`agy`). It sits on top of your
-work, shrinks to a strip when you want it out of the way, and folds into the
-tray as a gauge you can read at a glance. See what is left across every account
-at once — and switch between them without leaving the console you are in.
+A Windows desktop widget showing live **quota, token and context usage** for
+Google's **Gemini CLI / Antigravity CLI** (`agy`) — and an account switcher to
+go with it. It sits on top of your work, shrinks to a strip when you want it out
+of the way, and folds into the tray as a gauge you can read at a glance. See
+what is left across every account at once, how many tokens each has spent, how
+full the current conversation's context window is — and switch between accounts
+without leaving the console you are in.
 
-![The Lagrange widget](docs/screenshot.png)
+![Lagrange - Gemini CLI (agy) Usage](docs/screenshot.png)
 
+</div>
+
+<div align="center">
+<sub>
+
+quota meter · token usage · context window · account switcher ·
+`agy` · Antigravity CLI · Gemini CLI · Windows
+
+</sub>
 </div>
 
 ---

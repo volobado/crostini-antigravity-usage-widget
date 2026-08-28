@@ -16,7 +16,14 @@ from . import config
 
 STRINGS: dict[str, dict[str, str]] = {
     "en": {
+        # The wordmark drawn in the title bar, and the full product name used
+        # everywhere a person meets it outside the window: the taskbar, the tray
+        # balloon, the shortcut. "Lagrange" alone is a word the world already
+        # owns — the rest of the name is what says which Lagrange this is.
         "title": "L A G R A N G E",
+        "subtitle": "Gemini CLI (agy) usage",
+        "subtitle_short": "agy usage",
+        "product": "Lagrange - Gemini CLI (agy) Usage",
         "active": "ACTIVE",
         "running": "RUNNING",
         "loaded": "LOADED",
@@ -57,7 +64,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "tray_pin": "Always on top",
         "tray_refresh": "Refresh now",
         "tray_quit": "Quit Lagrange",
-        "tray_tip_signed_out": "Lagrange — not signed in",
+        "tray_tip_signed_out": "Lagrange - Gemini CLI (agy) Usage — not signed in",
         "tray_hint": "Lagrange keeps running in the tray — click the icon to bring it back.",
         # tokens
         "tokens": "Tokens",
@@ -79,6 +86,9 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     "ru": {
         "title": "L A G R A N G E",
+        "subtitle": "расход Gemini CLI (agy)",
+        "subtitle_short": "расход agy",
+        "product": "Lagrange - Gemini CLI (agy) Usage",
         "active": "АКТИВЕН",
         "running": "РАБОТАЕТ",
         "loaded": "ПОДСТАВЛЕН",
@@ -120,7 +130,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "tray_pin": "Поверх всех окон",
         "tray_refresh": "Обновить сейчас",
         "tray_quit": "Выйти из Lagrange",
-        "tray_tip_signed_out": "Lagrange — не залогинен",
+        "tray_tip_signed_out": "Lagrange - Gemini CLI (agy) Usage — не залогинен",
         "tray_hint": "Lagrange остался в трее — кликни по значку, чтобы вернуть окно.",
         # токены
         "tokens": "Токены",

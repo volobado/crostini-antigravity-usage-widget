@@ -6,6 +6,18 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 Entries under **Compatibility** name the Antigravity version that forced the
 change, so it is possible to tell at a glance whether an upgrade is required.
 
+## [1.2.1] — 2026-08-28
+
+### Changed
+
+- **The product now says what it is: "Lagrange - Gemini CLI (agy) Usage".** One
+  word named after a point in space is not something anyone finds when they go
+  looking for a quota widget, so the full name — with what it measures and what
+  it measures it for — is now in the window title, the tray, the shortcut, the
+  executable's properties and the top of this README. The wordmark in the title
+  bar keeps its `L A G R A N G E`, with a line under it saying which Lagrange
+  this is. The package, the CLI and the repository stay `lagrange`.
+
 ## [1.2.0] — 2026-08-28
 
 Verified against Antigravity CLI **1.1.22**.

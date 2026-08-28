@@ -278,12 +278,14 @@ class Starfield(tk.Canvas):
     SWEEP_EVERY_MS = 12000
     SWEEP_STEP_MS = 40
 
-    def __init__(self, master, height: int = 32, title: str = ""):
+    def __init__(self, master, height: int = 32, title: str = "",
+                 subtitle: tuple[str, ...] = ()):
         # width=1: a Tk canvas asks for 378 pixels by default, which would set
         # the floor for the whole window and make compact mode anything but.
         super().__init__(master, bg=VOID, width=1, height=height,
                          highlightthickness=0, bd=0)
         self._title = title
+        self._subtitle = subtitle
         self._stars: list[tuple[int, float]] = []
         self._sweep: list[int] = []
         self._timers: list[str] = []
@@ -325,8 +327,21 @@ class Starfield(tk.Canvas):
                 middle = height // 2
                 self.create_text(13, middle + 1, text=self._title, anchor="w",
                                  fill=mix(VOID, NEON, 0.7), font=F_BRAND, tags="brand")
-                self.create_text(12, middle, text=self._title, anchor="w",
-                                 fill=TEXT, font=F_BRAND, tags="brand")
+                mark = self.create_text(12, middle, text=self._title, anchor="w",
+                                        fill=TEXT, font=F_BRAND, tags="brand")
+                # What this Lagrange is. Measured rather than estimated: each
+                # candidate is drawn, and dropped again if its right edge lands
+                # past the canvas — the longest one that fits stays, and in
+                # compact, where the wordmark and the buttons are all the room
+                # there is, none of them do.
+                start = self.bbox(mark)[2] + 9
+                for text in self._subtitle:
+                    item = self.create_text(start, middle + 1, text=text, anchor="w",
+                                            fill=mix(VOID, MUTED, 0.85), font=F_TINY,
+                                            tags="brand")
+                    if self.bbox(item)[2] <= width - 6:
+                        break
+                    self.delete(item)
 
     def _breathe(self):
         if not self.winfo_exists():
@@ -519,7 +534,7 @@ class Widget:
     def _build(self):
         self.root = tk.Tk()
         self.root.withdraw()
-        self.root.title("Lagrange")
+        self.root.title(t("product"))
         self.root.configure(bg=VOID)
         self.root.overrideredirect(True)
         self.root.geometry(self.ui_state.get("geometry") or "+40+60")
@@ -534,7 +549,8 @@ class Widget:
         titlebar.pack(fill="x")
         titlebar.pack_propagate(False)
 
-        self.sky = Starfield(titlebar, height=32, title=t("title"))
+        self.sky = Starfield(titlebar, height=32, title=t("title"),
+                             subtitle=(t("subtitle"), t("subtitle_short")))
         self.sky.pack(side="left", fill="both", expand=True)
 
         # Packed right to left, so this reads 📌 ▭ ▁ ✕ on screen.
@@ -811,7 +827,7 @@ class Widget:
         self.hidden = True
         self.root.withdraw()
         if first_time:
-            self.tray.notify(t("title").replace(" ", ""), t("tray_hint"))
+            self.tray.notify(t("product"), t("tray_hint"))
 
     def _on_tray(self, name: str):
         if name == "show":
