@@ -281,7 +281,7 @@ def main(argv: list[str] | None = None) -> int:
         print(verdict)
         if report.worst != OK:
             print("Paste this report into an issue: "
-                  "https://github.com/Vovka666/lagrange/issues/new/choose")
+                  "https://github.com/Vovka666/antigravity-gemini-usage/issues/new/choose")
     return 0 if report.worst != FAIL else 1
 
 

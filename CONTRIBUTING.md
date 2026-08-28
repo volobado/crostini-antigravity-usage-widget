@@ -11,7 +11,7 @@ assumptions saves you from breaking them by accident.
 ## Running from a clone
 
 ```
-git clone https://github.com/Vovka666/lagrange.git
+git clone https://github.com/Vovka666/antigravity-gemini-usage.git
 cd lagrange
 bin\lagrange.cmd doctor
 bin\lagrange.cmd widget
