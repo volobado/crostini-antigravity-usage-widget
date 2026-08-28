@@ -10,6 +10,12 @@ shows nothing.
 So the position is checked against the monitors that exist right now, and moved
 only when it belongs to none of them. Hanging half off an edge is a choice
 somebody made by dragging, and is left alone.
+
+Growing off an edge is not that choice. When the widget changes its own size —
+leaving compact mode is the big one, a 224-pixel card becoming a metre of
+accounts — nobody dragged anything, and the part that no longer fits was never
+positioned by a person. `fit` covers that case by pulling the whole rectangle
+back inside the work area; `on_screen` still covers the saved-position one.
 """
 
 from __future__ import annotations
@@ -65,3 +71,63 @@ def on_screen(x: int, y: int, width: int, height: int,
 
     return (max(left + margin, min(x, right - width - margin)),
             max(top + margin, min(y, bottom - height - margin)))
+
+
+def anchored(x: int, y: int, old_width: int, old_height: int,
+             width: int, height: int) -> tuple[int, int]:
+    """
+    Where a window of the new size belongs, given which edges it was parked against.
+
+    A widget resized from its top-left corner grows down and to the right, which
+    is exactly wrong for one parked at the bottom of the screen: it grows
+    straight off the desk. So the corner that is kept is the one the window is
+    already nearest — sitting bottom-right, it grows up and to the left, and the
+    bottom-right corner does not move.
+
+    That also makes the change reversible. Going back to the small size keeps
+    the same corner, so a compact widget lands exactly where it was left rather
+    than drifting a little further every time it is opened and closed.
+    """
+    try:
+        left, top, right, bottom = work_area(x, y, old_width or width,
+                                             old_height or height)
+    except OSError:
+        return x, y
+
+    if right - (x + old_width) < x - left:   # nearer the right edge
+        x += old_width - width
+    if bottom - (y + old_height) < y - top:  # nearer the bottom edge
+        y += old_height - height
+    return x, y
+
+
+def fit(x: int, y: int, width: int, height: int, margin: int = 4) -> tuple[int, int]:
+    """
+    The nearest position where the whole window is inside the work area.
+
+    Used when the widget resizes itself: what used to fit at this corner may not
+    any more, and the overhang is nobody's decision. The window is nudged along
+    whichever axes overflow and left alone on the others, so a widget parked
+    against the right edge stays against the right edge — it just stops
+    disappearing past it.
+
+    A window taller than the work area cannot be made to fit; it is aligned to
+    the top instead, where its own title bar and first account are, rather than
+    to the bottom, where the least useful part is.
+    """
+    try:
+        left, top, right, bottom = work_area(x, y, width, height)
+    except OSError:
+        return x, y  # never move the window on the strength of a failed call
+
+    fitted_x = min(x, right - width - margin)
+    fitted_x = max(fitted_x, left + margin)
+    if width > right - left - 2 * margin:
+        fitted_x = left + margin
+
+    fitted_y = min(y, bottom - height - margin)
+    fitted_y = max(fitted_y, top + margin)
+    if height > bottom - top - 2 * margin:
+        fitted_y = top + margin
+
+    return fitted_x, fitted_y

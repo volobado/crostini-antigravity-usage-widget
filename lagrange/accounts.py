@@ -31,6 +31,27 @@ def _slot(email: str) -> str:
     return config.CRED_PREFIX + email.lower()
 
 
+# ─── priority order ──────────────────────────────────────────────────────────
+
+def priority_order() -> list[str]:
+    """Configured account order, lower-cased. Empty means no preference."""
+    return [str(e).lower() for e in (config.get("account_priority") or [])]
+
+
+def priority_key(email: str):
+    """
+    Sort key honouring `account_priority`.
+
+    Listed accounts come first in their configured order; everything else follows,
+    ordered by email so the list stays stable.
+    """
+    order = priority_order()
+    low = email.lower()
+    if low in order:
+        return (0, order.index(low), low)
+    return (1, 0, low)
+
+
 # ─── index ──────────────────────────────────────────────────────────────────
 
 def load_index() -> dict:
@@ -226,18 +247,45 @@ def sync_live_to_store() -> None:
         credstore.write(_slot(email), live, username=email)
 
 
-def switch_to(email: str) -> None:
+def switch_to(email: str, holder: str = "manual") -> None:
     """
     Load an account into Antigravity.
 
     Takes effect on the next `agy` start — Antigravity reads its credential once
     at launch and does not re-read it.
+
+    `holder` names whoever is asking (a project's own identifier, e.g. "vecna",
+    "pnews", or the default "manual" for a person at the widget/CLI). Antigravity
+    only has one credential slot on the machine, so several independent tools
+    inevitably share it; `holder` is what lets `last_usage()` — and `lagrange
+    status` — say who touched it last, instead of leaving that a mystery the
+    next time two of them collide.
     """
     blob = credstore.read(_slot(email))
     if not blob:
         raise AccountError(f"no stored credentials for {email}")
     sync_live_to_store()
     credstore.write(_agy_target(), blob, username=config.get("agy_cred_user"))
+    record_switch(email, holder)
+
+
+def record_switch(email: str, holder: str) -> None:
+    from . import tokens
+
+    with contextlib.suppress(OSError):
+        config.write_json(
+            config.USAGE_FILE,
+            {"account": email, "holder": holder, "at": datetime.now().astimezone().isoformat()},
+        )
+    # The token ledger has no other way of knowing the credential moved: a
+    # switch made from the CLI while the widget is closed would otherwise leave
+    # the next hours of work attributed to the account that just stepped aside.
+    tokens.record_account(email)
+
+
+def last_usage() -> dict | None:
+    """Who last called `switch_to`, with which account and when — or None."""
+    return config.read_json(config.USAGE_FILE, None)
 
 
 def valid_access_token(email: str) -> str:
@@ -316,8 +364,8 @@ def collect_state() -> dict:
         accounts.append(entry)
 
     accounts.sort(key=lambda a: (not (a["running"] or a["loaded"]), not a["running"],
-                                 a["email"]))
-    return {
+                                 priority_key(a["email"])))
+    state = {
         "accounts": accounts,
         "active": current,
         "running": sorted(running),
@@ -325,6 +373,116 @@ def collect_state() -> dict:
         "logged_in": read_live_cred() is not None,
         "fetched_at": datetime.now(timezone.utc),
     }
+    state["tokens"] = _token_summary(state, current)
+    return state
+
+
+def _token_summary(state: dict, current: str | None) -> dict:
+    """
+    Tokens spent per account, or {} when the ledger is off or unavailable.
+
+    Wrapped whole: reading Antigravity's conversation files is an extra the
+    widget can do without, and no failure in it may cost the quota figures that
+    are the point of the tool.
+    """
+    from . import tokens
+
+    try:
+        tokens.record_account(current)
+        tokens.sync()
+        return tokens.summarise(state)
+    except Exception:  # a ledger problem must never reach the interface
+        return {}
+
+
+# ─── auto-switch ─────────────────────────────────────────────────────────────
+
+def window_remaining(entry: dict, window: str) -> float | None:
+    """
+    Tightest remaining fraction across an account's buckets for one window.
+
+    An account has a bucket per model group (Gemini, Claude/GPT); the smallest is
+    what runs out first, so that is the number the switch decision watches.
+    """
+    values = [
+        bucket["remaining"]
+        for group in entry.get("groups", [])
+        for bucket in group.get("buckets", [])
+        if bucket.get("window") == window and bucket.get("remaining") is not None
+    ]
+    return min(values) if values else None
+
+
+def autoswitch_target(state: dict) -> str | None:
+    """
+    The account to load next when the current one is nearly spent, or None.
+
+    Fires only when the loaded account's watched window has crossed the used-quota
+    threshold and another account — the next one in priority order that still has
+    headroom — is available. Basing the decision on the *loaded* account (not the
+    running one) makes it settle after a single switch: once a fresh account is
+    loaded the check clears, so the widget does not thrash on every refresh.
+    """
+    if not config.get("auto_switch"):
+        return None
+
+    # Accounts other tools manage on their own are off limits: moving the
+    # credential out from under a running job burns the wrong account's quota
+    # and leaves that job rotating an account it is no longer on. Empty pool
+    # keeps the old behaviour of considering everything.
+    pool = {str(e).lower() for e in (config.get("auto_switch_pool") or [])}
+
+    def in_pool(email: str) -> bool:
+        return not pool or email.lower() in pool
+
+    entries = {a["email"].lower(): a for a in state.get("accounts", [])}
+    if len(entries) < 2:
+        return None
+
+    current = state.get("active")
+    if not current:
+        return None
+    # Loaded account belongs to somebody else — not ours to move.
+    if not in_pool(current):
+        return None
+    cur = entries.get(current.lower())
+    if not cur or cur.get("error"):
+        return None
+
+    window = config.get("auto_switch_window") or "5h"
+    keep = 1.0 - float(config.get("auto_switch_used_fraction"))  # remaining floor
+
+    cur_left = window_remaining(cur, window)
+    if cur_left is None or cur_left > keep:
+        return None  # the loaded account still has room — nothing to do
+
+    order = priority_order()
+
+    def rank(email: str) -> int:
+        low = email.lower()
+        return order.index(low) if low in order else len(order)
+
+    cur_rank = rank(current)
+    candidates = []
+    for entry in state.get("accounts", []):
+        email = entry["email"]
+        if email.lower() == current.lower() or entry.get("error"):
+            continue
+        if not in_pool(email):
+            continue
+        left = window_remaining(entry, window)
+        if left is None or left <= keep:
+            continue  # no point moving onto an account that is also spent
+        candidates.append((rank(email), email))
+
+    if not candidates:
+        return None
+
+    # Prefer the next account after the current one in priority order; wrap around
+    # to the start if the current account is already last with headroom.
+    after = sorted(c for c in candidates if c[0] > cur_rank)
+    ordered = after or sorted(candidates)
+    return ordered[0][1]
 
 
 # ─── adding an account ──────────────────────────────────────────────────────

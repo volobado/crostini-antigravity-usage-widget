@@ -8,6 +8,7 @@ install rarely does.
 
     python scripts/make_screenshot.py             docs/screenshot.png
     python scripts/make_screenshot.py --compact   docs/screenshot-compact.png
+    python scripts/make_screenshot.py --row       docs/screenshot-row.png
 """
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ sys.path.insert(0, REPO)
 
 OUTPUT = os.path.join(REPO, "docs", "screenshot.png")
 COMPACT_OUTPUT = os.path.join(REPO, "docs", "screenshot-compact.png")
+ROW_OUTPUT = os.path.join(REPO, "docs", "screenshot-row.png")
+ROW_SIZE = "430x118"
 WINDOW_X, WINDOW_Y = 120, 120
 
 _user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -135,6 +138,37 @@ def _account(email, running=False, pending=False, groups=None):
             "error": None, "groups": groups or []}
 
 
+def _figures(sent, received, thinking, cached, turns):
+    return {"sent": sent, "received": received, "thinking": thinking,
+            "cached": cached, "turns": turns}
+
+
+# The token ledger, invented to match the fabricated quota above: the running
+# account has spent a chunk of its five-hour window, the rest have not been
+# used since the last switch.
+LEDGER = {
+    "accounts": {
+        "account-1@example.com": {"5h": _figures(2_140_000, 96_400, 31_200, 5_800_000, 84),
+                                  "weekly": _figures(14_600_000, 702_000, 233_000,
+                                                     41_000_000, 612)},
+        "account-2@example.com": {"5h": _figures(0, 0, 0, 0, 0),
+                                  "weekly": _figures(1_130_000, 62_000, 19_400, 2_400_000, 47)},
+        "account-3@example.com": {"5h": _figures(0, 0, 0, 0, 0),
+                                  "weekly": _figures(4_820_000, 219_000, 71_000,
+                                                     9_900_000, 186)},
+        "account-4@example.com": {"5h": _figures(0, 0, 0, 0, 0),
+                                  "weekly": _figures(7_310_000, 355_000, 118_000,
+                                                     16_400_000, 291)},
+    },
+    "total": {"5h": _figures(2_140_000, 96_400, 31_200, 5_800_000, 84),
+              "weekly": _figures(27_860_000, 1_338_000, 441_400, 69_700_000, 1136)},
+    "unattributed": {"5h": _figures(0, 0, 0, 0, 0),
+                     "weekly": _figures(184_000, 9_200, 3_100, 402_000, 12)},
+    "context": {"used": 168_400, "limit": 256_000, "model": "gemini-3.7-flash",
+                "age": 240, "conversation": "example"},
+    "since": None,
+}
+
 # One of each state, and all three bar colours, so the picture documents the
 # whole interface rather than whatever the author's quota happened to be.
 STATE = {
@@ -151,14 +185,17 @@ STATE = {
     "tracking": True,
     "logged_in": True,
     "fetched_at": datetime.now(timezone.utc),
+    "tokens": LEDGER,
 }
 
 
 def main(argv: list[str] | None = None) -> int:
     from lagrange import accounts, ui
 
-    compact = "--compact" in (argv if argv is not None else sys.argv[1:])
-    output = COMPACT_OUTPUT if compact else OUTPUT
+    argv = argv if argv is not None else sys.argv[1:]
+    row = "--row" in argv
+    compact = row or "--compact" in argv
+    output = ROW_OUTPUT if row else (COMPACT_OUTPUT if compact else OUTPUT)
 
     # Isolated from a real install: no network, no shared singleton port, and
     # no chance of writing the fabricated layout into the user's ui.json.
@@ -166,7 +203,10 @@ def main(argv: list[str] | None = None) -> int:
     accounts.collect_state = lambda: STATE
     accounts.load_ui_state = lambda: {"geometry": f"+{WINDOW_X}+{WINDOW_Y}",
                                       "pinned": True, "expanded": [],
-                                      "compact": compact}
+                                      "compact": compact,
+                                      # The strip shape is a size, not a mode:
+                                      # the widget picks the layout from it.
+                                      "compact_size": ROW_SIZE if row else None}
     accounts.save_ui_state = lambda state: None
 
     widget = ui.Widget()

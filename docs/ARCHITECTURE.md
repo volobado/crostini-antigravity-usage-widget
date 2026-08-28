@@ -89,6 +89,47 @@ if Google changes them, the next run finds the new pair.
 
 Code: `discovery.py`.
 
+### Token counts are in Antigravity's conversation files, not in the quota API
+
+The quota endpoints report a remaining fraction and nothing else — there is no
+absolute figure anywhere in either response, and none of the other `v1internal:`
+methods in the binary offers a usage report. The counts exist locally instead.
+
+Antigravity keeps one SQLite database per conversation under
+`~/.gemini/antigravity-cli/conversations/<uuid>.db`. Its `steps` table holds one
+row per step of the trajectory, and the `metadata` column is a protobuf blob
+with no schema shipped anywhere. Two of its fields matter:
+
+```
+metadata.1   timestamp  { 1: unix seconds, 2: nanoseconds }
+metadata.9   usage      { 1: model id,     2: tokens sent,
+                          3: tokens received, 5: read from cache,
+                          9: of the received, spent thinking,
+                         10: the remainder — 9 + 10 == 3 }
+```
+
+Field numbers were established against a source that names them.
+`agy -p --output-format json` prints a `usage` block for the conversation it
+just ran; running a two-turn conversation and summing the per-turn readings
+reproduced `input_tokens`, `output_tokens` and `thinking_tokens` exactly
+(13 668 + 13 895 = 27 563, and so on). Steps of type 15 and 23 carry usage; no
+two steps in a conversation were ever seen carrying the same triple, so there is
+no double counting to guard against.
+
+`gen_metadata` in the same file describes the last generation, including the
+only place a model *name* appears (`1.19`) and the context accounting
+(`1.9.10` → `{1: tokens in context, 4: the model's context window}`) — which is
+where the context-depth bar comes from.
+
+Antigravity never records **which account** paid for a turn: it reads whatever
+credential the machine holds at launch. Lagrange is the thing that moves that
+credential, so it keeps a timeline of which account was loaded when and
+attributes turns by time. Anything before the timeline starts stays
+unattributed.
+
+Code: `agylog.py` (reading and decoding), `tokens.py` (ledger, attribution,
+aggregation over quota windows).
+
 ### A running `agy` never re-reads its credential
 
 Verified directly: start `agy`, swap the vault entry underneath it, wait through
@@ -108,10 +149,13 @@ config.py      paths, defaults, ~/.lagrange/config.json overrides
 credstore.py   CredRead / CredWrite / CredDelete / CredEnumerate via ctypes
 discovery.py   find agy.exe, lift + validate OAuth client, locate the vault entry
 api.py         Google endpoints, credential blob format, response normalisation
+agylog.py      read-only decoding of Antigravity's conversation files
+tokens.py      the token ledger: import, attribution, totals per quota window
 accounts.py    account store, switching, offline refresh, state for the UI
 session.py     handshake between widget and wrapper; which console runs what
 runner.py      `lagrange run` — restarts agy in place after a switch
 ui.py          the Tkinter widget
+chrome.py      window shaping — rounded corners for a borderless window
 tray.py        notification-area icon and its message loop, via ctypes
 i18n.py        interface strings
 doctor.py      per-assumption diagnostics
@@ -119,8 +163,31 @@ __main__.py    CLI
 ```
 
 Dependency direction is one way: `ui` and `runner` depend on `accounts`, which
-depends on `api`, `discovery` and `credstore`, all of which depend on `config`.
-`ui` also owns `tray`, which depends on nothing. Nothing depends on `ui`.
+depends on `api`, `discovery`, `credstore` and `tokens`, all of which depend on
+`config`; `tokens` also depends on `agylog`. `ui` owns `tray`, which depends on
+nothing. Nothing depends on `ui`.
+
+`accounts` reaches the ledger through one wrapped call — a failure there returns
+an empty summary and the quota bars draw unchanged. The ledger is an addition to
+the widget, never a precondition for it.
+
+## Rounded corners on a window Tk does not own
+
+Tk draws rectangles, so the shape has to come from Windows, and two mechanisms
+exist. DWM's corner preference (Windows 11 22000+) rounds and anti-aliases the
+frame, but only for windows DWM actually frames — an `overrideredirect` window
+frequently is not one, and the call then succeeds while changing nothing. A
+window region (`SetWindowRgn`) clips the window to any shape on any Windows
+version, at the cost of hard edges. Both are asked for; the region is what
+guarantees the result.
+
+The trap that cost a round of "it still looks square": **`winfo_id()` is not the
+window.** Tk hands back the child it draws into, and shaping that child changes
+nothing visible while still reporting success. Every call in `chrome.py` walks
+up with `GetAncestor(..., GA_ROOT)` first.
+
+A region is cut to an exact size, so it is reapplied from `_fit` on every layout
+change — a region left over from a taller layout clips the new one.
 
 ## The tray
 
@@ -208,6 +275,7 @@ Lagrange never fight over an expiring token.
 | `~/.lagrange/discovered.json` | agy signature, endpoint names, validated client pair |
 | `~/.lagrange/ui.json` | window position |
 | `~/.lagrange/sessions/` | pid and account per open console |
+| `~/.lagrange/tokens.db` | token counts per turn, and which account was loaded when — counts only, never content |
 
 `discovered.json` is the one file that can hold a client secret, and only
 because it caches what was read from the local binary. It never leaves the

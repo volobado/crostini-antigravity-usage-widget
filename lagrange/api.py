@@ -9,7 +9,11 @@ five-hour and a weekly window.
 
 from __future__ import annotations
 
+import http.client
 import json
+import socket
+import ssl
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -41,6 +45,45 @@ class NeedsReauth(ApiError):
     """The refresh token no longer works — the account must sign in again."""
 
 
+class TransientError(ApiError):
+    """
+    The request never reached a verdict: dropped TLS, reset socket, 5xx.
+
+    Kept apart from the rest because it says nothing about the account — the
+    same call usually succeeds seconds later, so the widget must treat it as
+    "no answer yet", not as a broken account.
+    """
+
+
+# A home router, antivirus TLS inspection, a VPN or Google's own frontend can
+# close a connection mid-handshake; OpenSSL reports that as
+# UNEXPECTED_EOF_WHILE_READING. Retrying is the whole cure — every call here is
+# safe to repeat.
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF = (0.7, 2.0)
+RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+_TRANSIENT_EXCEPTIONS = (
+    ssl.SSLError, socket.timeout, socket.gaierror, TimeoutError, ConnectionError,
+    http.client.RemoteDisconnected, http.client.IncompleteRead, http.client.BadStatusLine,
+)
+
+
+def _is_transient(exc: BaseException | str | None) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in RETRYABLE_STATUS
+    if isinstance(exc, urllib.error.URLError):
+        # `reason` carries the real cause; a bare string means "network, cause
+        # unknown", which is still worth another try.
+        return _is_transient(exc.reason) if isinstance(exc.reason, BaseException) else True
+    return isinstance(exc, _TRANSIENT_EXCEPTIONS)
+
+
+def _describe(exc: BaseException | None) -> str:
+    reason = getattr(exc, "reason", None) or exc
+    return f"no answer from Google: {reason}"
+
+
 def _headers(access_token: str | None = None) -> dict[str, str]:
     headers = {"User-Agent": config.get("user_agent")}
     if access_token:
@@ -48,19 +91,42 @@ def _headers(access_token: str | None = None) -> dict[str, str]:
     return headers
 
 
+def request_json(request: urllib.request.Request) -> dict:
+    """
+    Send a request, retrying the failures that mean nothing.
+
+    HTTPError is passed through untouched once retries are spent, because the
+    status code is what callers decide on; everything else collapses into
+    TransientError so no OpenSSL diagnostic ever reaches the interface.
+    """
+    timeout = config.get("request_timeout")
+    last: BaseException | None = None
+    for attempt in range(RETRY_ATTEMPTS):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
+            if not _is_transient(exc):
+                raise
+            last = exc
+            if attempt + 1 < RETRY_ATTEMPTS:
+                time.sleep(RETRY_BACKOFF[min(attempt, len(RETRY_BACKOFF) - 1)])
+    if isinstance(last, urllib.error.HTTPError):
+        raise last
+    raise TransientError(_describe(last)) from last
+
+
 def post_json(url: str, body: dict, access_token: str) -> dict:
     request = urllib.request.Request(
         url, data=json.dumps(body).encode("utf-8"), method="POST",
         headers={**_headers(access_token), "Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=config.get("request_timeout")) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    return request_json(request)
 
 
 def post_form(url: str, form: dict) -> dict:
     request = urllib.request.Request(url, data=urllib.parse.urlencode(form).encode("utf-8"),
                                      method="POST", headers=_headers())
-    with urllib.request.urlopen(request, timeout=config.get("request_timeout")) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    return request_json(request)
 
 
 def refresh_access_token(refresh_token: str, client_id: str, client_secret: str) -> dict:
@@ -101,9 +167,7 @@ def authorization_url(redirect_uri: str, state: str, client_id: str) -> str:
 
 
 def fetch_userinfo(access_token: str) -> dict:
-    request = urllib.request.Request(USERINFO_URL, headers=_headers(access_token))
-    with urllib.request.urlopen(request, timeout=config.get("request_timeout")) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    return request_json(urllib.request.Request(USERINFO_URL, headers=_headers(access_token)))
 
 
 def fetch_quota_summary(access_token: str, host: str | None = None) -> dict:

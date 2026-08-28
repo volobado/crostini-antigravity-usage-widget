@@ -26,7 +26,10 @@ _MARKS = {OK: "[ ok ]", WARN: "[warn]", FAIL: "[FAIL]"}
 
 # Settings that say nothing about compatibility — how the widget looks and what
 # it can launch, rather than what it assumes about Antigravity.
-PREFERENCE_KEYS = {"language", "launchers", "refresh_seconds", "request_timeout"}
+PREFERENCE_KEYS = {"language", "launchers", "refresh_seconds", "request_timeout",
+                   "account_priority", "auto_switch", "auto_switch_used_fraction",
+                   "auto_switch_window", "auto_switch_pool",
+                   "track_tokens", "token_history_days"}
 
 
 class Report:
@@ -173,9 +176,18 @@ def run(deep: bool = True) -> Report:
                 report.add(OK, f"quota · {masked}", f"{left}\n        shape: {shape}")
             except api.NeedsReauth:
                 report.add(WARN, f"quota · {masked}", "refresh token rejected — sign in again")
+            except api.TransientError as exc:
+                # Not a broken install: the request never got an answer. Usually
+                # TLS interception (antivirus, VPN, corporate proxy) or a flaky link.
+                report.add(WARN, f"quota · {masked}",
+                           f"{exc}\n        retried {api.RETRY_ATTEMPTS}x — network or "
+                           f"TLS interference (VPN, antivirus, proxy)")
             except (accounts.AccountError, api.ApiError, urllib.error.URLError,
                     OSError, RuntimeError) as exc:
                 report.add(FAIL, f"quota · {masked}", str(exc)[:200])
+
+    # ── token ledger ────────────────────────────────────────────────────────
+    _check_ledger(report)
 
     # ── overrides in effect ─────────────────────────────────────────────────
     overrides = config.read_json(config.CONFIG_FILE, {})
@@ -198,6 +210,41 @@ def run(deep: bool = True) -> Report:
                    f"preferences only: {', '.join(sorted(redacted))}")
 
     return report
+
+
+def _check_ledger(report: Report) -> None:
+    """
+    Can the token figures be read at all, and do they cover anything yet?
+
+    Reported as a warning at worst: the ledger is an extra. The check exists
+    because its two ways of going quiet — Antigravity moving its conversation
+    directory, and a timeline that has not seen a switch yet — both look
+    identical from the widget, where the numbers simply read zero.
+    """
+    from . import agylog, tokens
+
+    if not tokens.enabled():
+        report.add(OK, "token ledger", "off (track_tokens is false)")
+        return
+
+    directory = agylog.conversations_dir()
+    if not directory:
+        report.add(WARN, "token ledger",
+                   "Antigravity's conversations directory not found — token "
+                   "figures will read zero. Set conversations_dir in "
+                   "~/.lagrange/config.json")
+        return
+
+    files = agylog.conversation_files(directory)
+    since = tokens.tracking_since()
+    totals = tokens.totals()
+    detail = (f"{directory}\n        {len(files)} conversation file(s) · "
+              f"{totals['turns']} turn(s) recorded · "
+              f"↑ {tokens.human(totals['sent'])} ↓ {tokens.human(totals['received'])}")
+    if since:
+        detail += f"\n        attributed since {since.astimezone():%Y-%m-%d %H:%M}"
+    status = OK if files else WARN
+    report.add(status, "token ledger", detail)
 
 
 def _mask_email(email: str) -> str:

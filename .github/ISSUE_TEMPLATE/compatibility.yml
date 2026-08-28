@@ -29,7 +29,7 @@ body:
     attributes:
       label: Antigravity version
       description: Output of `agy --version`
-      placeholder: "1.1.12"
+      placeholder: "1.1.22"
     validations:
       required: true
 

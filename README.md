@@ -42,12 +42,24 @@ same credential entry `agy` actually reads.
   for every group and window.
 - **All accounts at once.** Inactive accounts are refreshed offline with their
   own refresh tokens, so you can see which one has room *before* switching.
+- **The tokens behind the percentage.** Every card says what that account sent
+  and received inside each quota window, and an *All accounts* card adds the
+  fleet up — plus how full the last conversation's context window is. See
+  [Where the token figures come from](#where-the-token-figures-come-from).
 - **Switching that doesn't cost you your session.** Run `agy` through
   `lagrange run` and a switch takes effect in the **same console**, resuming the
   same conversation. No second window, no lost scrollback.
-- **Out of the way when you want it.** Compact mode shrinks it to the account in
-  use; the tray icon is itself a gauge of your tightest window, so you can close
-  the widget and still see where you stand.
+- **Switching before you notice.** Put your accounts in the order you want them
+  used and Lagrange can hand the credential on by itself when the one in play
+  runs low, leaving a slice for small tasks. Off by default — see
+  [Account order and auto-switching](#account-order-and-auto-switching).
+- **Out of the way when you want it.** Compact mode shrinks it to a heads-up
+  display of the account in use — one big number for the tightest window, a
+  meter per model group, the tokens spent in the last five hours; the tray icon
+  is itself a gauge, so you can hide the window and still see where you stand.
+- **Easy on the eyes.** Rounded corners, a deep-space palette, gradient meters
+  and a horizon line that pulses when new figures land. `"effects": false`
+  turns the motion off and keeps the layout.
 - **Nothing in the clear.** Every account's token lives in Windows Credential
   Manager. On disk Lagrange keeps only email addresses and window position.
 - **Says when it breaks.** `lagrange doctor` checks every assumption
@@ -59,7 +71,7 @@ same credential entry `agy` actually reads.
 |---|---|
 | OS | Windows 10 or 11 — `agy` stores its token in Windows Credential Manager |
 | Python | 3.10+ with tkinter (the standard python.org installer includes it) |
-| Antigravity | `agy` installed and signed in. Verified against **1.1.12** |
+| Antigravity | `agy` installed and signed in. Verified against **1.1.22** |
 
 No third-party packages. Standard library only.
 
@@ -130,14 +142,32 @@ it. Running it twice raises the existing window rather than opening a second.
 | ▁ | Hide to the tray |
 | ✕ | Quit |
 | click a collapsed card | Expand that account |
+| mouse wheel | Scroll the account list when it is taller than the screen |
 | **Switch** | Load that account into Antigravity |
 | **+ Add account** | Sign in through the browser; the active account is untouched |
 | ⟳ | Refresh now (otherwise every 60 s) |
 
-Bars are green above 50 %, amber from 20 to 50 %, red below.
+Bars are green above 50 %, amber from 20 to 50 %, red below. Each window shows
+both how long is left and when it refills — the clock time if that is today, a
+short date (`Sep 4`) if it is not.
 
-Compact keeps the account in use and its two model groups, each showing whichever
-window is tightest:
+Compact is the whole widget shrunk to the account in use: the tightest window as
+one large number with its reset under it, a meter per model group, the tokens
+that went out in the last five hours, and how full the last conversation's
+context window is. Its **All accounts** button and the hide control come with
+it, so nothing is a dead end.
+
+Compact can be resized by hand: drag its right edge, its bottom, or the corner
+handle. The meters stretch to the width you give them, the size is remembered,
+and a window dragged short and wide switches to a strip layout — identity and
+the big number on the left, meters in the middle, reset time and tokens on the
+right — which sits along the top of a screen without wasting a row.
+
+Switching between the two keeps the corner the widget is parked against — from
+the bottom right the full view grows up and to the left, never off the screen —
+and each size remembers its own position, so collapsing lands the small window
+back where you left it. If the list is taller than your screen, the window stops
+at what fits and the accounts scroll under the wheel:
 
 ![Lagrange, compact](docs/screenshot-compact.png)
 
@@ -176,12 +206,92 @@ Then, after you press **Switch**:
 Without the wrapper the widget falls back to offering your launchers, which open
 a new console.
 
+Dragged short and wide, compact becomes a strip — identity and the big number on
+the left, meters in the middle, reset time and tokens on the right:
+
+![Lagrange, as a strip](docs/screenshot-row.png)
+
+### Account order and auto-switching
+
+List your accounts best-first in `~/.lagrange/config.json` and the widget uses
+that order everywhere — in the list, and when reaching for the next account:
+
+```json
+{
+  "account_priority": ["work@example.com", "spare@example.com"],
+  "auto_switch": true,
+  "auto_switch_used_fraction": 0.85,
+  "auto_switch_window": "5h",
+  "auto_switch_pool": ["spare@example.com"]
+}
+```
+
+With `auto_switch` on, when the loaded account's five-hour window drops below
+what `auto_switch_used_fraction` leaves (15 % here), Lagrange loads the next
+account in the order that still has headroom. It never interrupts anything: the
+running session keeps the account it started with and finishes on that last
+slice, and the new one takes effect at the next `agy` start — in the same
+console, if you launched through `lagrange run`.
+
+The decision is made on the *loaded* account rather than the running one, so it
+settles after a single switch instead of firing on every refresh. Switches made
+this way are recorded as `auto`, and `lagrange status` will say so.
+
+`auto_switch_pool` limits which accounts may be touched. Set it when other tools
+on the machine drive `agy` on their own schedule: Antigravity has one credential
+slot per machine, and an unrestricted auto-switch will happily move it out from
+under a job that is mid-run. Empty means "all of them", which is right for one
+person at one console.
+
+### Where the token figures come from
+
+Google's quota endpoint answers in fractions — *how much of the window is left* —
+and never in tokens. So the token counts come from the other side: Antigravity
+writes one SQLite file per conversation under
+`~/.gemini/antigravity-cli/conversations`, and every model turn in it records
+what that turn cost and when it happened. Lagrange reads those files, read-only
+and incrementally, and keeps a small ledger in `~/.lagrange/tokens.db`.
+
+The field numbers are not documented anywhere — they were confirmed against a
+source that names them. `agy -p --output-format json` prints a `usage` block for
+the conversation it just ran, and the per-turn readings sum to it exactly:
+
+```
+$ agy -p "Say OK" --output-format json --model gemini-3.7-flash --effort low
+... "usage":{"input_tokens":13668,"output_tokens":23,"thinking_tokens":22, ...}
+```
+
+Antigravity has one credential slot per machine and never writes down whose it
+is, so it cannot say which account paid for a turn — but Lagrange is what moves
+the credential. It keeps a timeline of which account was loaded when, and
+attributes each turn to whoever was in place at the time. Turns from before the
+ledger existed are reported as **unattributed** rather than assigned to a guess.
+
+A quota window's start is its reset time minus the window's length, so "spent
+this window" is the turns since — the same stretch of time the bar above it is
+measuring.
+
+Three keys in `~/.lagrange/config.json` control it:
+
+| key | default | |
+|---|---|---|
+| `track_tokens` | `true` | Set to `false` to switch the ledger off entirely |
+| `conversations_dir` | `""` | Empty means "find it" |
+| `token_history_days` | `90` | `0` keeps everything |
+
+One more key, unrelated to tokens: `"effects": false` stops the star field
+breathing, the scan sweep and the horizon pulse. The layout and colours stay as
+they are; the widget then repaints only when its numbers change.
+
 ### Command line
 
 ```
 lagrange                    open the widget
 lagrange run [agy args]     run Antigravity with in-place switching
 lagrange list               accounts and remaining quota
+lagrange usage              tokens per account and quota window
+lagrange usage --by-day 30  daily totals
+lagrange usage --by-model   which models the tokens went to
 lagrange switch <email>
 lagrange add
 lagrange forget <email>
@@ -200,7 +310,10 @@ lagrange doctor [--json] [--quick]
   └────────────────────────┘                          │
                                               ┌───────▼────────┐
    ~/.lagrange/accounts.json  (emails only)   │  the widget    │
-   ~/.lagrange/config.json    (overrides)     └────────────────┘
+   ~/.lagrange/config.json    (overrides)     └───────▲────────┘
+   ~/.lagrange/tokens.db      (token counts)          │
+                                                      │ per turn
+                       ~/.gemini/antigravity-cli/conversations/*.db
 ```
 
 Switching writes a stored copy over `gemini:antigravity`. Quota for accounts
@@ -229,7 +342,7 @@ When something does move, `lagrange doctor` says which layer:
 
 ```
 [ ok ] agy.exe                 C:\Users\you\AppData\Local\agy\bin\agy.exe
-                               version 1.1.12
+                               version 1.1.22
 [ ok ] credential entry        gemini:antigravity
 [ ok ] oauth client validated  id …tent.com (len 73) · secret …qDAf (len 35)
 [warn] quota endpoint          binary offers [...], config uses '...'
@@ -247,6 +360,10 @@ how to patch it yourself in the meantime.
   format Antigravity uses.
 - `~/.lagrange/` holds email addresses, window geometry and cached discovery
   results — no secrets.
+- The token ledger stores counts, not content: how many tokens a turn cost, when
+  it happened, which model and which account. Nothing of what was said is read
+  out of Antigravity's conversation files, and they are only ever opened
+  read-only.
 - `lagrange doctor` prints lengths and last characters, never values.
 - Sign-in is the standard OAuth loopback flow; the browser talks to Google, and
   Lagrange only ever sees the resulting code.

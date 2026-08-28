@@ -32,6 +32,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "waiting_browser": "waiting for browser sign-in…",
         "next_refresh": "next refresh in {seconds}s",
         "switched": "Loaded into Antigravity: {email}",
+        "auto_switched": "Auto-switched — quota almost spent. Next account loaded: {email}",
         "added": "Account added: {email}",
         "restart_in_place": "Leave Antigravity (/exit or Ctrl+C) — it restarts in "
                             "that same console on the new account and resumes your "
@@ -58,6 +59,23 @@ STRINGS: dict[str, dict[str, str]] = {
         "tray_quit": "Quit Lagrange",
         "tray_tip_signed_out": "Lagrange — not signed in",
         "tray_hint": "Lagrange keeps running in the tray — click the icon to bring it back.",
+        # tokens
+        "tokens": "Tokens",
+        "all_accounts": "All accounts",
+        "context": "Context",
+        "context_idle": "idle {age}",
+        "no_turns": "nothing sent in this window",
+        "unattributed": "{sent} ↑ / {received} ↓ not tied to an account",
+        "counted_since": "tokens counted since {date}",
+        # compact view
+        "expand_all": "▤  All accounts",
+        "compact_hint": "click a bar for the full view",
+        "worst_window": "tightest window",
+        # reset times
+        "resets_at": "resets at",
+        "today": "today",
+        "tomorrow": "tomorrow",
+        "date_short": "{month} {day}",
     },
     "ru": {
         "title": "L A G R A N G E",
@@ -76,6 +94,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "waiting_browser": "жду вход в браузере…",
         "next_refresh": "обновление через {seconds} с",
         "switched": "Аккаунт подставлен: {email}",
+        "auto_switched": "Авто-переключение — лимит почти исчерпан. Подставлен следующий: {email}",
         "added": "Аккаунт добавлен: {email}",
         "restart_in_place": "Выйди из agy (/exit или Ctrl+C) — он перезапустится "
                             "в том же окне на новом аккаунте и продолжит тот же "
@@ -103,6 +122,23 @@ STRINGS: dict[str, dict[str, str]] = {
         "tray_quit": "Выйти из Lagrange",
         "tray_tip_signed_out": "Lagrange — не залогинен",
         "tray_hint": "Lagrange остался в трее — кликни по значку, чтобы вернуть окно.",
+        # токены
+        "tokens": "Токены",
+        "all_accounts": "Все аккаунты",
+        "context": "Контекст",
+        "context_idle": "простой {age}",
+        "no_turns": "в этом окне ничего не отправлялось",
+        "unattributed": "{sent} ↑ / {received} ↓ без привязки к аккаунту",
+        "counted_since": "токены считаются с {date}",
+        # компактный вид
+        "expand_all": "▤  Все аккаунты",
+        "compact_hint": "клик по полосе — полный вид",
+        "worst_window": "ближайший лимит",
+        # время сброса
+        "resets_at": "сброс",
+        "today": "сегодня",
+        "tomorrow": "завтра",
+        "date_short": "{day} {month}",
     },
 }
 
@@ -112,6 +148,17 @@ STRINGS: dict[str, dict[str, str]] = {
 WINDOWS: dict[str, dict[str, str]] = {
     "en": {"5h": "5-hour", "weekly": "weekly", "daily": "daily", "monthly": "monthly"},
     "ru": {"5h": "5 часов", "weekly": "неделя", "daily": "сутки", "monthly": "месяц"},
+}
+
+
+# Month abbreviations are spelled out rather than taken from strftime("%b"),
+# which follows the machine's locale: an English widget on a Russian Windows
+# would print "сен" in the middle of an English line.
+MONTHS: dict[str, tuple[str, ...]] = {
+    "en": ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"),
+    "ru": ("янв", "фев", "мар", "апр", "мая", "июн",
+           "июл", "авг", "сен", "окт", "ноя", "дек"),
 }
 
 
@@ -133,6 +180,12 @@ def t(key: str, **params) -> str:
 
 def window(window_id: str, fallback: str = "") -> str:
     return WINDOWS.get(_lang, {}).get(window_id) or fallback or window_id
+
+
+def month(index: int) -> str:
+    """Abbreviated month name, 1–12."""
+    names = MONTHS.get(_lang) or MONTHS["en"]
+    return names[max(1, min(12, index)) - 1]
 
 
 def language() -> str:
