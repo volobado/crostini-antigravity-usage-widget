@@ -73,7 +73,8 @@ def on_screen(x: int, y: int, width: int, height: int,
     if not _user32:
         try:
             left, top, right, bottom = work_area(x, y, width, height)
-            if x + width < left + margin or x > right - margin or y + height < top + margin or y > bottom - margin:
+            if (x + width > right - margin or x < left + margin or
+                y + height > bottom - margin or y < top + margin):
                 return (max(left + margin, min(x, right - width - margin)),
                         max(top + margin, min(y, bottom - height - margin)))
         except Exception:

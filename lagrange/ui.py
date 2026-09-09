@@ -784,7 +784,15 @@ class Widget:
         dx = event.x_root - self._drag_from[0]
         dy = event.y_root - self._drag_from[1]
         nx = self._win_from[0] + dx
-        ny = max(0, self._win_from[1] + dy)
+        ny = self._win_from[1] + dy
+        try:
+            w = self.root.winfo_width() or MIN_WIDTH
+            h = self.root.winfo_height() or 120
+            left, top, right, bottom = screens.work_area(nx, ny, w, h)
+            nx = max(left, min(nx, right - 60))
+            ny = max(top, min(ny, bottom - 32))
+        except Exception:
+            ny = max(0, ny)
         self.root.geometry(f"+{nx}+{ny}")
 
     def _drag_end(self, event=None):
