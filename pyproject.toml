@@ -3,21 +3,24 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lagrange-agy"
+name = "crostini-antigravity-usage-widget"
 version = "1.2.2"
-description = "Lagrange - Gemini CLI (agy) Usage: live quota, token and context meter, and account switcher, for Antigravity CLI (agy)"
+description = "ChromeOS Crostini fork of Lagrange - Gemini CLI (agy) Usage: live quota, token and context meter, and account switcher, for Antigravity CLI (agy)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [{ name = "Volo Bado" }]
 keywords = ["antigravity", "antigravity-cli", "agy", "gemini", "gemini-cli",
-            "quota", "usage", "tokens", "context", "widget", "cli", "windows"]
+            "quota", "usage", "tokens", "context", "widget", "cli", "windows",
+            "linux", "chromeos"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Win32 (MS Windows)",
+    "Environment :: X11 Applications",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Topic :: Utilities",
 ]

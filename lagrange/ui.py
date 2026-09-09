@@ -25,7 +25,7 @@ import threading
 import tkinter as tk
 from datetime import datetime, timezone
 
-from . import accounts, api, chrome, config, screens, session, tokens
+from . import _x11, accounts, api, chrome, config, screens, session, tokens
 from . import tray as tray_module
 from .i18n import month as month_name
 from .i18n import t
@@ -78,6 +78,22 @@ F_BIG = (_MONO_FAMILY, 15, "bold")
 F_MONO = (_MONO_FAMILY, 8)
 
 SINGLETON_PORT = 52719
+
+# A borderless (override-redirect) window is what gives Windows its custom
+# titlebar with no OS decoration at all. It is also what ChromeOS's Crostini
+# container cannot place reliably: Sommelier composites unmanaged windows
+# through a Wayland popup path that never honours an absolute screen position
+# — confirmed live on the Claude Code usage widget, which shares this same
+# architecture, by moving an already-mapped window to a safe corner and
+# finding it still unreachable — so the window ends up rendered somewhere the
+# user cannot reach or even see. A normal, managed window trades the fully
+# custom frame for a native ChromeOS titlebar drawn above this one, in
+# exchange for actually being visible, positionable and (unlike an
+# override-redirect window) present in ChromeOS's own app-switcher. Real X11
+# desktops (GNOME, KDE, XFCE) do not share this Sommelier-specific bug and
+# keep the fully borderless look — `is_sommelier` tells the two apart instead
+# of penalising every Linux desktop for one compositor's limitation.
+BORDERLESS = sys.platform == "win32" or not _x11.is_sommelier()
 
 # Narrow enough to stay out of the way, wide enough that the title bar buttons
 # remain clickable. Compact has its own floor: it is meant to be small.
@@ -586,7 +602,8 @@ class Widget:
         self.root.withdraw()
         self.root.title(t("product"))
         self.root.configure(bg=VOID)
-        self.root.overrideredirect(True)
+        if BORDERLESS:
+            self.root.overrideredirect(True)
         self.root.geometry(self.ui_state.get("geometry") or "+40+60")
         with contextlib.suppress(tk.TclError):
             self.root.attributes("-topmost", self._pinned)
@@ -1829,14 +1846,13 @@ class Widget:
         row.pack(fill="x", pady=(3, 5))
         self._button(row, t("expand_all"), self._toggle_compact,
                      small=True).pack(side="left")
-        if self.tray:
-            hide = tk.Label(row, text="▁", bg=BG, fg=MUTED, font=F_MAIN, cursor="hand2",
-                            padx=6)
-            hide.pack(side="right")
-            hide.bind("<Button-1>", lambda _e: self._hide_to_tray())
-            hide.bind("<Enter>", lambda e: e.widget.configure(fg=CYAN))
-            hide.bind("<Leave>", lambda e: e.widget.configure(fg=MUTED))
-            Tooltip(hide, t("tip_tray"))
+        hide = tk.Label(row, text="▁", bg=BG, fg=MUTED, font=F_MAIN, cursor="hand2",
+                        padx=6)
+        hide.pack(side="right")
+        hide.bind("<Button-1>", lambda _e: self._hide_window())
+        hide.bind("<Enter>", lambda e: e.widget.configure(fg=CYAN))
+        hide.bind("<Leave>", lambda e: e.widget.configure(fg=MUTED))
+        Tooltip(hide, t("tip_tray") if self.tray else t("tip_minimize"))
 
     @staticmethod
     def _worst_bucket(account: dict) -> tuple[float | None, dict | None]:

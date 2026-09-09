@@ -20,10 +20,51 @@ without leaving the console you are in.
 <sub>
 
 quota meter · token usage · context window · account switcher ·
-`agy` · Antigravity CLI · Gemini CLI · Windows
+`agy` · Antigravity CLI · Gemini CLI · Windows · Linux · ChromeOS
 
 </sub>
 </div>
+
+---
+
+## This is the ChromeOS Crostini fork
+
+[Lagrange - Gemini CLI (agy) Usage](https://github.com/Vovka666/antigravity-gemini-usage-widget)
+started Windows-only, like its Claude Code sibling — the same
+`ctypes`-into-`user32`/`gdi32`/`shell32` construction, plus `advapi32` for
+Windows Credential Manager. This fork's history already carries most of the
+Linux/X11 port: window shaping via the X Shape extension, monitor geometry
+via XRandR, a tray fallback where ChromeOS's Crostini container has no panel
+process to host one, and — since Windows Credential Manager does not exist on
+Linux — credentials read from `~/.gemini/antigravity-cli/antigravity-oauth-token`
+(matching where Antigravity's own Linux build keeps its live token) with
+additional accounts under `~/.lagrange/credentials/`, mode `0600`.
+
+What this fork adds on top, found by testing on an actual ChromeOS Crostini
+session rather than assumed from the code:
+
+- **The window was live and correctly drawn — and physically unreachable.**
+  Crostini's window manager, Sommelier, does not honour an absolute screen
+  position for a borderless (`overrideredirect`) window: unmanaged windows
+  route through a Wayland popup path that silently drops the requested
+  coordinates. Confirmed live, the same way as on the Claude Code sibling
+  this fork already mirrors: moving an already-mapped window to a safe corner
+  changed nothing. Fixed the same way — a normal, managed window specifically
+  under Sommelier (detected via `_NET_SUPPORTING_WM_CHECK`, so a real Linux
+  desktop keeps the fully borderless look) — trading a native ChromeOS
+  titlebar above the widget's own for the window actually being reachable.
+- **The shelf icon didn't match.** ChromeOS's shelf pairs a running window to
+  its `.desktop` entry (and icon) by `WM_CLASS`; `StartupWMClass` in the
+  `.desktop` file and the Tk `className` now agree (`lagrange-widget`).
+- One live bug from the port: the compact view's own hide button still called
+  a method renamed elsewhere (`_hide_to_tray`, no longer defined) and was
+  gated behind a tray that never exists on Crostini — dead code that would
+  have thrown the moment it *could* run. Fixed to match the title bar's own
+  hide button: always shown, minimizes where there is no tray to hide into.
+
+See **Install** below for ChromeOS/Crostini setup, and `git log` for the
+commit-by-commit account — the bulk of the Linux port predates these fixes.
+Windows is unmodified throughout.
 
 ---
 
@@ -80,8 +121,8 @@ same credential entry `agy` actually reads.
 
 | | |
 |---|---|
-| OS | Windows 10 or 11 — `agy` stores its token in Windows Credential Manager |
-| Python | 3.10+ with tkinter (the standard python.org installer includes it) |
+| OS | Windows 10/11 (token in Windows Credential Manager), or Linux with an X server — including ChromeOS's Crostini container — (token in `~/.gemini/antigravity-cli/`) |
+| Python | 3.10+ with tkinter (the standard python.org installer includes it; on Linux, `sudo apt install python3-tk` if missing) |
 | Antigravity | `agy` installed and signed in. Verified against **1.1.22** |
 
 No third-party packages. Standard library only.
@@ -122,6 +163,28 @@ start `agy` through `lagrange run`.
 
 Prefer pip? `pip install .` gives you `lagrange` and `lagrange-widget` on PATH.
 Without either, run everything through `bin\lagrange.cmd`.
+
+### Linux / ChromeOS (Crostini)
+
+```bash
+git clone https://github.com/Vovka666/antigravity-gemini-usage-widget.git
+cd antigravity-gemini-usage-widget
+sudo apt install python3-tk     # if `python3 -c "import tkinter"` fails
+bash scripts/install_linux.sh   # launchers + app-menu entry, no pip involved
+lagrange-widget                 # the widget ("lagrange" alone is the CLI)
+```
+
+No pip install here either — the installer points `~/.local/bin/lagrange` and
+`~/.local/bin/lagrange-widget` straight at the cloned repo (`PYTHONPATH`, not
+a copy), plus a `.desktop` entry ChromeOS's own app launcher picks up on its
+own. Moving or deleting the clone means re-running the installer.
+
+**On ChromeOS's Crostini container specifically**, the window keeps its own
+title bar but also gets a native ChromeOS one above it, rather than the fully
+borderless look Windows gets — Crostini's compositor (Sommelier) cannot
+reliably place or even show a truly borderless window, confirmed live, so the
+widget asks for a normal, decorated one there instead. A real Linux desktop
+(GNOME, KDE, XFCE) does not have this problem and keeps the borderless look.
 
 ### Building the executables yourself
 
