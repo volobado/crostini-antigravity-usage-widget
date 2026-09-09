@@ -44,7 +44,14 @@ if _user32:
 def work_area(x: int, y: int, width: int, height: int) -> tuple[int, int, int, int]:
     """The usable area of the monitor nearest that rectangle, taskbar excluded."""
     if not _user32:
-        return 0, 0, 3840, 2160
+        try:
+            import tkinter as tk
+            root = getattr(tk, "_default_root", None)
+            if root:
+                return 0, 0, root.winfo_screenwidth(), root.winfo_screenheight()
+        except Exception:
+            pass
+        return 0, 0, 1920, 1080
     rect = wintypes.RECT(x, y, x + width, y + height)
     monitor = _user32.MonitorFromRect(ctypes.byref(rect), MONITOR_DEFAULTTONEAREST)
     info = _MONITORINFO()
@@ -64,6 +71,13 @@ def on_screen(x: int, y: int, width: int, height: int,
     which keeps the two comparable whatever the display scaling does to them.
     """
     if not _user32:
+        try:
+            left, top, right, bottom = work_area(x, y, width, height)
+            if x + width < left + margin or x > right - margin or y + height < top + margin or y > bottom - margin:
+                return (max(left + margin, min(x, right - width - margin)),
+                        max(top + margin, min(y, bottom - height - margin)))
+        except Exception:
+            pass
         return x, y
     try:
         rect = wintypes.RECT(x, y, x + width, y + height)

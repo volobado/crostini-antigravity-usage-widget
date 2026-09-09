@@ -591,6 +591,7 @@ class Widget:
         for widget in (titlebar, self.sky):
             widget.bind("<Button-1>", self._drag_start)
             widget.bind("<B1-Motion>", self._drag_move)
+            widget.bind("<ButtonRelease-1>", lambda _e: self._drag_end())
 
         self.horizon = Horizon(shell)
         self.horizon.pack(fill="x")
@@ -758,6 +759,9 @@ class Widget:
         self.root.geometry(
             f"+{self._win_from[0] + event.x_root - self._drag_from[0]}"
             f"+{self._win_from[1] + event.y_root - self._drag_from[1]}")
+
+    def _drag_end(self):
+        self._save_ui()
 
     def _toggle_pin(self):
         pinned = not bool(self.root.attributes("-topmost"))
