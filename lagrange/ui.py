@@ -20,6 +20,7 @@ import queue
 import random
 import socket
 import subprocess
+import sys
 import threading
 import tkinter as tk
 from datetime import datetime, timezone
@@ -57,14 +58,24 @@ RED = "#ff6b7d"
 ACCENT = CYAN
 STAR = "#25406b"
 
-F_BRAND = ("Consolas", 10, "bold")
-F_TITLE = ("Segoe UI Semibold", 9)
-F_MAIN = ("Segoe UI", 9)
-F_SMALL = ("Segoe UI", 8)
-F_TINY = ("Segoe UI", 7)
-F_MAIL = ("Segoe UI Semibold", 10)
-F_BIG = ("Consolas", 15, "bold")
-F_MONO = ("Consolas", 8)
+if sys.platform == "win32":
+    _MONO_FAMILY = "Consolas"
+    F_TITLE = ("Segoe UI Semibold", 9)
+    F_MAIN = ("Segoe UI", 9)
+    F_SMALL = ("Segoe UI", 8)
+    F_TINY = ("Segoe UI", 7)
+    F_MAIL = ("Segoe UI Semibold", 10)
+else:
+    _MONO_FAMILY = "DejaVu Sans Mono"
+    F_TITLE = ("Inter", 9, "bold")
+    F_MAIN = ("Inter", 9)
+    F_SMALL = ("Inter", 8)
+    F_TINY = ("Inter", 7)
+    F_MAIL = ("Inter", 10, "bold")
+
+F_BRAND = (_MONO_FAMILY, 10, "bold")
+F_BIG = (_MONO_FAMILY, 15, "bold")
+F_MONO = (_MONO_FAMILY, 8)
 
 SINGLETON_PORT = 52719
 
@@ -296,11 +307,13 @@ class Starfield(tk.Canvas):
             self._later(self.BREATH_MS, self._breathe)
             self._later(self.SWEEP_EVERY_MS, self._sweep_once)
 
-    def bind_drag(self, start, move, end):
-        self._drag_callbacks = (start, move, end)
+    def bind_drag(self, start, move, end, context_menu=None):
+        self._drag_callbacks = (start, move, end, context_menu)
         self.bind("<Button-1>", start)
         self.bind("<B1-Motion>", move)
         self.bind("<ButtonRelease-1>", end)
+        if context_menu:
+            self.bind("<Button-3>", context_menu)
 
     # A canvas that outlives its window would keep the whole widget alive; every
     # callback re-checks existence instead of trusting the schedule.
@@ -365,11 +378,13 @@ class Starfield(tk.Canvas):
                     self.delete(item)
 
             if self._drag_callbacks:
-                start, move, end = self._drag_callbacks
+                start, move, end, context_menu = self._drag_callbacks
                 for tag in ("brand", "star", "sweep"):
                     self.tag_bind(tag, "<Button-1>", start)
                     self.tag_bind(tag, "<B1-Motion>", move)
                     self.tag_bind(tag, "<ButtonRelease-1>", end)
+                    if context_menu:
+                        self.tag_bind(tag, "<Button-3>", context_menu)
 
     def _breathe(self):
         if not self.winfo_exists():
@@ -536,6 +551,12 @@ class Widget:
         self.compact = bool(self.ui_state.get("compact", False))
         self.compact_size = self._saved_compact_size()
         self.hidden = False
+        # Tracked ourselves rather than read back from Tk: `-topmost` is
+        # advisory, and a window manager that ignores it (ChromeOS's Crostini
+        # session does — it never advertises _NET_WM_STATE_ABOVE) would leave
+        # the readback permanently false and the pin button permanently "off"
+        # even while `_tick` is faithfully re-raising the window every second.
+        self._pinned = bool(self.ui_state.get("pinned", True))
         self._width = MIN_WIDTH
         self._shape = (0, 0)
         self._resize_axis = ""
@@ -567,7 +588,8 @@ class Widget:
         self.root.configure(bg=VOID)
         self.root.overrideredirect(True)
         self.root.geometry(self.ui_state.get("geometry") or "+40+60")
-        self.root.attributes("-topmost", bool(self.ui_state.get("pinned", True)))
+        with contextlib.suppress(tk.TclError):
+            self.root.attributes("-topmost", self._pinned)
 
         outer = tk.Frame(self.root, bg=BORDER, padx=1, pady=1)
         outer.pack(fill="both", expand=True)
@@ -583,14 +605,14 @@ class Widget:
                              subtitle=(t("subtitle"), t("subtitle_short")))
         self.sky.pack(side="left", fill="both", expand=True)
 
-        # Packed right to left, so this reads 📌 ▭ — ✕ on screen.
-        buttons = [("✕", self._close, "close", t("tip_close"), RED)]
-        if self.tray:
-            buttons.append(("▁", self._hide_to_tray, "tray", t("tip_tray"), CYAN))
-        else:
-            buttons.append(("—", self._minimize_window, "minimize", t("tip_minimize"), CYAN))
-        buttons.append(("▭", self._toggle_compact, "compact", t("tip_compact"), CYAN))
-        buttons.append(("📌", self._toggle_pin, "pin", t("tip_pin"), NEON))
+        # Packed right to left, so this reads 📌 ▭ ▁ ✕ on screen.
+        buttons = [
+            ("✕", self._close, "close", t("tip_close"), RED),
+            ("▁", self._hide_window, "tray",
+             t("tip_tray") if self.tray else t("tip_minimize"), CYAN),
+            ("▭", self._toggle_compact, "compact", t("tip_compact"), CYAN),
+            ("📌", self._toggle_pin, "pin", t("tip_pin"), NEON),
+        ]
 
         for text, command, name, tip, hot in buttons:
             button = tk.Label(titlebar, text=text, bg=VOID, fg=MUTED, font=F_MAIN,
@@ -605,17 +627,29 @@ class Widget:
             elif name == "compact":
                 self.compact_button, self.compact_tip = button, hint
 
-        self.sky.bind_drag(self._drag_start, self._drag_move, self._drag_end)
+        # Without a tray menu to carry it, "Restart widget" needs somewhere to
+        # live — a right-click on the title bar, the one gesture free on every
+        # platform this runs on.
+        self._titlebar_menu = tk.Menu(self.root, tearoff=False, bg=CARD, fg=TEXT,
+                                      activebackground=CYAN,
+                                      activeforeground="#1a0d05")
+        self._titlebar_menu.add_command(label=t("tray_restart"),
+                                        command=self._restart_process)
+
+        self.sky.bind_drag(self._drag_start, self._drag_move, self._drag_end,
+                           context_menu=self._show_titlebar_menu)
         for widget in (titlebar, outer, shell):
             widget.bind("<Button-1>", self._drag_start)
             widget.bind("<B1-Motion>", self._drag_move)
             widget.bind("<ButtonRelease-1>", self._drag_end)
+            widget.bind("<Button-3>", self._show_titlebar_menu)
 
         self.horizon = Horizon(shell)
         self.horizon.pack(fill="x")
         self.horizon.bind("<Button-1>", self._drag_start)
         self.horizon.bind("<B1-Motion>", self._drag_move)
         self.horizon.bind("<ButtonRelease-1>", self._drag_end)
+        self.horizon.bind("<Button-3>", self._show_titlebar_menu)
 
         self.body = tk.Frame(shell, bg=BG)
         self.body.pack(fill="both", expand=True)
@@ -775,52 +809,56 @@ class Widget:
     def _drag_start(self, event):
         self._drag_from = (event.x_root, event.y_root)
         self._win_from = (self.root.winfo_x(), self.root.winfo_y())
-        try:
-            event.widget.grab_set()
-        except Exception:
-            pass
 
     def _drag_move(self, event):
-        dx = event.x_root - self._drag_from[0]
-        dy = event.y_root - self._drag_from[1]
-        nx = self._win_from[0] + dx
-        ny = self._win_from[1] + dy
+        self.root.geometry(
+            f"+{self._win_from[0] + event.x_root - self._drag_from[0]}"
+            f"+{self._win_from[1] + event.y_root - self._drag_from[1]}")
+
+    def _drag_end(self, _event=None):
+        self._pull_on_screen()
+        self._save_ui()
+
+    def _show_titlebar_menu(self, event):
         try:
-            w = self.root.winfo_width() or MIN_WIDTH
-            h = self.root.winfo_height() or 120
-            left, top, right, bottom = screens.work_area(nx, ny, w, h)
-            nx = max(left, min(nx, right - 60))
-            ny = max(top, min(ny, bottom - 32))
-        except Exception:
-            ny = max(0, ny)
-        self.root.geometry(f"+{nx}+{ny}")
+            self._titlebar_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self._titlebar_menu.grab_release()
 
-    def _drag_end(self, event=None):
-        if event:
-            try:
-                event.widget.grab_release()
-            except Exception:
-                pass
-        self.root.update_idletasks()
-        self._save_ui()
+    def _restart_process(self):
+        """
+        Relaunch the widget from scratch — the last resort, from the tray or titlebar menu.
 
-    def _minimize_window(self):
-        self._save_ui()
-        self.hidden = True
-        self.root.withdraw()
+        Frozen, that is the executable itself; from source, the interpreter with
+        the same arguments. Either way the new process takes the singleton port
+        the moment this one lets it go, so the two never overlap.
+        """
+        if getattr(sys, "frozen", False):
+            command = [sys.executable]
+        else:
+            command = [sys.executable, "-m", "lagrange", "widget"]
+        try:
+            subprocess.Popen(command, close_fds=True,
+                             creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+        except OSError:
+            return
+        self._close()
 
     def _toggle_pin(self):
-        pinned = not bool(self.root.attributes("-topmost"))
-        self.root.attributes("-topmost", pinned)
-        self.ui_state["pinned"] = pinned
-        self._sync_pin()
+        self._set_pinned(not self._pinned)
         self._save_ui()
 
+    def _set_pinned(self, pinned: bool) -> None:
+        self._pinned = pinned
+        with contextlib.suppress(tk.TclError):
+            self.root.attributes("-topmost", pinned)
+        self.ui_state["pinned"] = pinned
+        self._sync_pin()
+
     def _sync_pin(self):
-        pinned = bool(self.root.attributes("-topmost"))
-        self.pin_button.configure(fg=NEON if pinned else DIM)
+        self.pin_button.configure(fg=NEON if self._pinned else DIM)
         if self.tray:
-            self.tray.set_pinned(pinned)
+            self.tray.set_pinned(self._pinned)
 
     def _toggle_compact(self):
         """
@@ -877,24 +915,28 @@ class Widget:
     # ── tray ────────────────────────────────────────────────────────────────
     def _start_tray(self):
         labels = {"show": t("tray_show"), "pin": t("tray_pin"),
-                  "refresh": t("tray_refresh"), "quit": t("tray_quit")}
+                  "refresh": t("tray_refresh"), "restart": t("tray_restart"),
+                  "quit": t("tray_quit")}
         icon = tray_module.Tray(lambda name: self.results.put(("tray", name)), labels)
-        icon.set_pinned(bool(self.ui_state.get("pinned", True)))
-        # No tray, no hiding: a borderless window has no taskbar button either,
-        # and a widget you cannot get back is worse than one always on screen.
+        icon.set_pinned(self._pinned)
         return icon if icon.start() else None
 
-    def _hide_to_tray(self):
-        if not self.tray:
-            self._minimize_window()
-            return
-        # Once, on the first hide: an icon nobody can find reads as a crash.
+    def _hide_window(self):
+        """
+        ▁: hide to the tray where one exists, otherwise a plain minimize.
+
+        ChromeOS's Linux container has no tray host to hide into at all, so
+        there `self.tray` is always the no-op stand-in from tray.py — the
+        window just withdraws, and the way back is the singleton lock:
+        launching `lagrange` again pokes this process instead of opening a
+        second window (see `Singleton`/`main`).
+        """
         first_time = not self.ui_state.get("tray_hint_shown")
         self.ui_state["tray_hint_shown"] = True
         self._save_ui()  # geometry, while the window still reports it
         self.hidden = True
         self.root.withdraw()
-        if first_time:
+        if self.tray and first_time:
             self.tray.notify(t("product"), t("tray_hint"))
 
     def _on_tray(self, name: str):
@@ -904,6 +946,8 @@ class Widget:
             self._toggle_pin()
         elif name == "refresh":
             self._request("refresh")
+        elif name == "restart":
+            self._restart_process()
         elif name == "quit":
             self._close()
 
@@ -1017,12 +1061,18 @@ class Widget:
                                or f"+{self.root.winfo_x()}+{self.root.winfo_y()}")
             self._pull_on_screen()  # the screen may have changed while it was away
             self.root.lift()
-            self.root.attributes("-topmost", True)
             with contextlib.suppress(tk.TclError):
+                self.root.attributes("-topmost", True)
                 self.root.focus_force()
-            if not self.ui_state.get("pinned", True):
-                self.root.after(4000, lambda: self.root.attributes("-topmost", False))
+            if not self._pinned:
+                self.root.after(4000, self._unboost_topmost)
         self.root.after(0, show)
+
+    def _unboost_topmost(self):
+        """Undo `_show_window`'s temporary pop-to-front once it has served its
+        purpose, for a widget that was not asked to stay pinned."""
+        with contextlib.suppress(tk.TclError):
+            self.root.attributes("-topmost", False)
 
     # ── background work ─────────────────────────────────────────────────────
     def _request(self, action, payload=None):
@@ -1107,6 +1157,15 @@ class Widget:
             # and a widget stranded outside them all is indistinguishable from
             # one that never opened.
             self._pull_on_screen()
+            if self._pinned:
+                # `-topmost` is a request a window manager can just ignore —
+                # ChromeOS's Crostini session does, having no
+                # _NET_WM_STATE_ABOVE support at all — so pinned also means
+                # "re-raise every tick" rather than trusting the attribute
+                # alone. Harmless where the attribute already works: raising
+                # an already-topmost window does nothing new.
+                with contextlib.suppress(tk.TclError):
+                    self.root.lift()
         self._timers["tick"] = self.root.after(1000, self._tick)
 
     # ── rendering ───────────────────────────────────────────────────────────

@@ -20,17 +20,17 @@ back inside the work area; `on_screen` still covers the saved-position one.
 
 from __future__ import annotations
 
-try:
+import sys
+
+if sys.platform == "win32":
     import ctypes
     from ctypes import wintypes
+
     _user32 = ctypes.WinDLL("user32", use_last_error=True)
-except (OSError, AttributeError):
-    _user32 = None
 
-MONITOR_DEFAULTTONULL = 0
-MONITOR_DEFAULTTONEAREST = 2
+    MONITOR_DEFAULTTONULL = 0
+    MONITOR_DEFAULTTONEAREST = 2
 
-if _user32:
     class _MONITORINFO(ctypes.Structure):
         _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
                     ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
@@ -40,57 +40,136 @@ if _user32:
     _user32.GetMonitorInfoW.restype = wintypes.BOOL
     _user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(_MONITORINFO)]
 
-
-def work_area(x: int, y: int, width: int, height: int) -> tuple[int, int, int, int]:
-    """The usable area of the monitor nearest that rectangle, taskbar excluded."""
-    if not _user32:
-        try:
-            import tkinter as tk
-            root = getattr(tk, "_default_root", None)
-            if root:
-                return 0, 0, root.winfo_screenwidth(), root.winfo_screenheight()
-        except Exception:
-            pass
-        return 0, 0, 1920, 1080
-    rect = wintypes.RECT(x, y, x + width, y + height)
-    monitor = _user32.MonitorFromRect(ctypes.byref(rect), MONITOR_DEFAULTTONEAREST)
-    info = _MONITORINFO()
-    info.cbSize = ctypes.sizeof(_MONITORINFO)
-    if not monitor or not _user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
-        raise OSError("no monitor information")
-    area = info.rcWork
-    return area.left, area.top, area.right, area.bottom
-
-
-def on_screen(x: int, y: int, width: int, height: int,
-              margin: int = 24) -> tuple[int, int]:
-    """
-    The same position, unless no monitor shows any part of the window.
-
-    Coordinates come from the calling process, and so do the monitor rectangles,
-    which keeps the two comparable whatever the display scaling does to them.
-    """
-    if not _user32:
-        try:
-            left, top, right, bottom = work_area(x, y, width, height)
-            if (x + width > right - margin or x < left + margin or
-                y + height > bottom - margin or y < top + margin):
-                return (max(left + margin, min(x, right - width - margin)),
-                        max(top + margin, min(y, bottom - height - margin)))
-        except Exception:
-            pass
-        return x, y
-    try:
+    def work_area(x: int, y: int, width: int, height: int) -> tuple[int, int, int, int]:
+        """The usable area of the monitor nearest that rectangle, taskbar excluded."""
         rect = wintypes.RECT(x, y, x + width, y + height)
-        if _user32.MonitorFromRect(ctypes.byref(rect), MONITOR_DEFAULTTONULL):
-            return x, y  # something shows at least part of it
+        monitor = _user32.MonitorFromRect(ctypes.byref(rect), MONITOR_DEFAULTTONEAREST)
+        info = _MONITORINFO()
+        info.cbSize = ctypes.sizeof(_MONITORINFO)
+        if not monitor or not _user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            raise OSError("no monitor information")
+        area = info.rcWork
+        return area.left, area.top, area.right, area.bottom
 
-        left, top, right, bottom = work_area(x, y, width, height)
-    except OSError:
-        return x, y  # never move the window on the strength of a failed call
+    def on_screen(x: int, y: int, width: int, height: int,
+                  margin: int = 24) -> tuple[int, int]:
+        """
+        The same position, unless no monitor shows any part of the window.
 
-    return (max(left + margin, min(x, right - width - margin)),
-            max(top + margin, min(y, bottom - height - margin)))
+        Coordinates come from the calling process, and so do the monitor rectangles,
+        which keeps the two comparable whatever the display scaling does to them.
+        """
+        try:
+            rect = wintypes.RECT(x, y, x + width, y + height)
+            if _user32.MonitorFromRect(ctypes.byref(rect), MONITOR_DEFAULTTONULL):
+                return x, y  # something shows at least part of it
+
+            left, top, right, bottom = work_area(x, y, width, height)
+        except OSError:
+            return x, y  # never move the window on the strength of a failed call
+
+        return (max(left + margin, min(x, right - width - margin)),
+                max(top + margin, min(y, bottom - height - margin)))
+
+else:
+    # Linux/X11: the OS gives us monitor rectangles (XRandR) but no notion of a
+    # taskbar-trimmed "work area" that holds across window managers — and on
+    # ChromeOS's Crostini session specifically there is no panel drawn inside
+    # the X11 screen at all, so the full monitor rectangle already *is* the
+    # usable area. Elsewhere a docked panel might clip a few pixels this
+    # cannot see; the window still ends up on-screen, just not taskbar-aware.
+    import ctypes
+
+    from . import _x11
+
+    _randr: ctypes.CDLL | None = None
+    _randr_tried = False
+
+    class _XRRMonitorInfo(ctypes.Structure):
+        _fields_ = [
+            ("name", ctypes.c_ulong),
+            ("primary", ctypes.c_int),
+            ("automatic", ctypes.c_int),
+            ("noutput", ctypes.c_int),
+            ("x", ctypes.c_int), ("y", ctypes.c_int),
+            ("width", ctypes.c_int), ("height", ctypes.c_int),
+            ("mwidth", ctypes.c_int), ("mheight", ctypes.c_int),
+            ("outputs", ctypes.c_void_p),
+        ]
+
+    def _ext() -> ctypes.CDLL | None:
+        global _randr, _randr_tried
+        if _randr_tried:
+            return _randr
+        _randr_tried = True
+        lib = _x11.load("libXrandr.so.2")
+        if not lib:
+            return None
+        lib.XRRGetMonitors.restype = ctypes.POINTER(_XRRMonitorInfo)
+        lib.XRRGetMonitors.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int,
+                                       ctypes.POINTER(ctypes.c_int)]
+        lib.XRRFreeMonitors.argtypes = [ctypes.POINTER(_XRRMonitorInfo)]
+        _randr = lib
+        return _randr
+
+    def _monitors() -> list[tuple[int, int, int, int]]:
+        """`(x, y, width, height)` for every active monitor, via XRandR."""
+        lib, dpy, root = _ext(), _x11.display(), _x11.root_window()
+        if not lib or not dpy or not root:
+            raise OSError("no XRandR")
+        count = ctypes.c_int(0)
+        found = lib.XRRGetMonitors(dpy, root, 1, ctypes.byref(count))
+        if not found or count.value <= 0:
+            raise OSError("no monitor information")
+        try:
+            return [(found[i].x, found[i].y, found[i].width, found[i].height)
+                    for i in range(count.value)]
+        finally:
+            lib.XRRFreeMonitors(found)
+
+    def _overlap(rect: tuple[int, int, int, int],
+                 monitor: tuple[int, int, int, int]) -> int:
+        left, top, right, bottom = rect
+        mx, my, mw, mh = monitor
+        width = min(right, mx + mw) - max(left, mx)
+        height = min(bottom, my + mh) - max(top, my)
+        return max(0, width) * max(0, height)
+
+    def work_area(x: int, y: int, width: int, height: int) -> tuple[int, int, int, int]:
+        """The rectangle of the monitor nearest that rectangle."""
+        rect = (x, y, x + width, y + height)
+        monitors = _monitors()
+        best = max(monitors, key=lambda monitor: _overlap(rect, monitor))
+        if _overlap(rect, best) <= 0:
+            cx, cy = x + width / 2, y + height / 2
+
+            def distance(monitor: tuple[int, int, int, int]) -> float:
+                mx, my, mw, mh = monitor
+                return (cx - (mx + mw / 2)) ** 2 + (cy - (my + mh / 2)) ** 2
+
+            best = min(monitors, key=distance)
+        mx, my, mw, mh = best
+        return mx, my, mx + mw, my + mh
+
+    def on_screen(x: int, y: int, width: int, height: int,
+                  margin: int = 24) -> tuple[int, int]:
+        """
+        The same position, unless no monitor shows any part of the window.
+
+        Coordinates come from the calling process, and so do the monitor rectangles,
+        which keeps the two comparable whatever the display scaling does to them.
+        """
+        try:
+            rect = (x, y, x + width, y + height)
+            if any(_overlap(rect, monitor) > 0 for monitor in _monitors()):
+                return x, y  # something shows at least part of it
+
+            left, top, right, bottom = work_area(x, y, width, height)
+        except OSError:
+            return x, y  # never move the window on the strength of a failed call
+
+        return (max(left + margin, min(x, right - width - margin)),
+                max(top + margin, min(y, bottom - height - margin)))
 
 
 def anchored(x: int, y: int, old_width: int, old_height: int,
