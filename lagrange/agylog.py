@@ -35,6 +35,8 @@ _DIR_CANDIDATES = [
     r"%USERPROFILE%\.gemini\antigravity-cli\conversations",
     r"%USERPROFILE%\.antigravity\conversations",
     r"%LOCALAPPDATA%\antigravity\conversations",
+    os.path.expanduser("~/.gemini/antigravity-cli/conversations"),
+    os.path.expanduser("~/.antigravity/conversations"),
 ]
 
 

@@ -70,28 +70,29 @@ def run(deep: bool = True) -> Report:
                f"Lagrange {__version__} · Python {sys.version.split()[0]} · "
                f"{platform.system()} {platform.release()}")
 
-    if sys.platform != "win32":
+    if sys.platform not in ("win32", "linux", "darwin"):
         report.add(FAIL, "platform",
-                   "Lagrange needs Windows: Antigravity stores its token in "
-                   "Windows Credential Manager")
+                   f"Unsupported platform: {sys.platform}")
         return report
 
     # ── Antigravity binary ──────────────────────────────────────────────────
+    agy_name = "agy.exe" if sys.platform == "win32" else "agy"
     agy_path = discovery.find_agy()
     if not agy_path:
-        report.add(FAIL, "agy.exe", "not found — set agy_path in ~/.lagrange/config.json")
+        report.add(FAIL, agy_name, f"not found — set agy_path in ~/.lagrange/config.json")
     else:
         version = discovery.agy_version(agy_path) or "unknown"
         status = OK if version == VERIFIED_AGY_VERSION else WARN
         note = "" if status == OK else f" (verified against {VERIFIED_AGY_VERSION})"
-        report.add(status, "agy.exe", f"{agy_path}\n        version {version}{note}")
+        report.add(status, agy_name, f"{agy_path}\n        version {version}{note}")
 
     # ── credential entry ────────────────────────────────────────────────────
     configured = config.get("agy_cred_target")
     target = discovery.find_agy_cred_target()
+    cred_src = "Credential Manager entry" if sys.platform == "win32" else "token file"
     if not target:
         report.add(FAIL, "credential entry",
-                   f"no Credential Manager entry with Antigravity's token shape "
+                   f"no {cred_src} with Antigravity's token shape "
                    f"(looked for '{configured}'). Is Antigravity signed in?")
     elif target != configured:
         report.add(WARN, "credential entry",

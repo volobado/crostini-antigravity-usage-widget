@@ -20,28 +20,31 @@ back inside the work area; `on_screen` still covers the saved-position one.
 
 from __future__ import annotations
 
-import ctypes
-from ctypes import wintypes
-
-_user32 = ctypes.WinDLL("user32", use_last_error=True)
+try:
+    import ctypes
+    from ctypes import wintypes
+    _user32 = ctypes.WinDLL("user32", use_last_error=True)
+except (OSError, AttributeError):
+    _user32 = None
 
 MONITOR_DEFAULTTONULL = 0
 MONITOR_DEFAULTTONEAREST = 2
 
+if _user32:
+    class _MONITORINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                    ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
 
-class _MONITORINFO(ctypes.Structure):
-    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
-                ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
-
-
-_user32.MonitorFromRect.restype = wintypes.HMONITOR
-_user32.MonitorFromRect.argtypes = [ctypes.POINTER(wintypes.RECT), wintypes.DWORD]
-_user32.GetMonitorInfoW.restype = wintypes.BOOL
-_user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(_MONITORINFO)]
+    _user32.MonitorFromRect.restype = wintypes.HMONITOR
+    _user32.MonitorFromRect.argtypes = [ctypes.POINTER(wintypes.RECT), wintypes.DWORD]
+    _user32.GetMonitorInfoW.restype = wintypes.BOOL
+    _user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(_MONITORINFO)]
 
 
 def work_area(x: int, y: int, width: int, height: int) -> tuple[int, int, int, int]:
     """The usable area of the monitor nearest that rectangle, taskbar excluded."""
+    if not _user32:
+        return 0, 0, 3840, 2160
     rect = wintypes.RECT(x, y, x + width, y + height)
     monitor = _user32.MonitorFromRect(ctypes.byref(rect), MONITOR_DEFAULTTONEAREST)
     info = _MONITORINFO()
@@ -60,6 +63,8 @@ def on_screen(x: int, y: int, width: int, height: int,
     Coordinates come from the calling process, and so do the monitor rectangles,
     which keeps the two comparable whatever the display scaling does to them.
     """
+    if not _user32:
+        return x, y
     try:
         rect = wintypes.RECT(x, y, x + width, y + height)
         if _user32.MonitorFromRect(ctypes.byref(rect), MONITOR_DEFAULTTONULL):

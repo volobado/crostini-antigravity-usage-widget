@@ -612,6 +612,8 @@ class Widget:
             "<Configure>",
             lambda e: self.viewport.itemconfigure(self._content_id, width=e.width))
         self.root.bind("<MouseWheel>", self._on_wheel)
+        self.root.bind("<Button-4>", lambda e: self._on_wheel_button(e, -1))
+        self.root.bind("<Button-5>", lambda e: self._on_wheel_button(e, 1))
 
         self.footer = tk.Frame(self.body, bg=BG, height=34)
         self.footer.pack(fill="x", padx=8, pady=(4, 8))
@@ -1089,6 +1091,13 @@ class Widget:
             return
         with contextlib.suppress(tk.TclError):
             self.viewport.yview_scroll(-1 if event.delta > 0 else 1, "units")
+            self._draw_thumb()
+
+    def _on_wheel_button(self, event, step: int):
+        if not self._scrollable:
+            return
+        with contextlib.suppress(tk.TclError):
+            self.viewport.yview_scroll(step, "units")
             self._draw_thumb()
 
     def _draw_thumb(self):

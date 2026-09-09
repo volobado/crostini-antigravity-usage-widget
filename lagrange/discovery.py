@@ -29,6 +29,9 @@ _AGY_CANDIDATES = [
     r"%LOCALAPPDATA%\Programs\agy\bin\agy.exe",
     r"%USERPROFILE%\.agy\bin\agy.exe",
     r"%LOCALAPPDATA%\antigravity\bin\agy.exe",
+    os.path.expanduser("~/.local/bin/agy"),
+    "/usr/local/bin/agy",
+    "/usr/bin/agy",
 ]
 
 # ─── patterns lifted from the binary ────────────────────────────────────────
