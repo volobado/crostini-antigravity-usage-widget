@@ -33,6 +33,8 @@ _STILL_ACTIVE = 259
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 
+import sys
+
 def _process_alive(pid: int | None) -> bool:
     """
     Is that wrapper process still there?
@@ -44,17 +46,28 @@ def _process_alive(pid: int | None) -> bool:
     """
     if not pid or pid <= 0:
         return False
-    kernel32 = ctypes.windll.kernel32
-    handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
-    if not handle:
-        return False
-    try:
-        code = ctypes.c_ulong()
-        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+    if sys.platform == "win32":
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not handle:
             return False
-        return code.value == _STILL_ACTIVE
-    finally:
-        kernel32.CloseHandle(handle)
+        try:
+            code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False
+            return code.value == _STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    else:
+        try:
+            os.kill(int(pid), 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
 
 
 def _read_session(path: str) -> dict | None:
