@@ -546,7 +546,7 @@ class Widget:
 
     # ── window ──────────────────────────────────────────────────────────────
     def _build(self):
-        self.root = tk.Tk()
+        self.root = tk.Tk(className="lagrange-widget")
         self.root.withdraw()
         self.root.title(t("product"))
         self.root.configure(bg=VOID)
