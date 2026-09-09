@@ -290,10 +290,17 @@ class Starfield(tk.Canvas):
         self._sweep: list[int] = []
         self._timers: list[str] = []
         self._animated = effects_on()
+        self._drag_callbacks = None
         self.bind("<Configure>", lambda _e: self._paint())
         if self._animated:
             self._later(self.BREATH_MS, self._breathe)
             self._later(self.SWEEP_EVERY_MS, self._sweep_once)
+
+    def bind_drag(self, start, move, end):
+        self._drag_callbacks = (start, move, end)
+        self.bind("<Button-1>", start)
+        self.bind("<B1-Motion>", move)
+        self.bind("<ButtonRelease-1>", end)
 
     # A canvas that outlives its window would keep the whole widget alive; every
     # callback re-checks existence instead of trusting the schedule.
@@ -356,6 +363,13 @@ class Starfield(tk.Canvas):
                     if self.bbox(item)[2] <= width - 6:
                         break
                     self.delete(item)
+
+            if self._drag_callbacks:
+                start, move, end = self._drag_callbacks
+                for tag in ("brand", "star", "sweep"):
+                    self.tag_bind(tag, "<Button-1>", start)
+                    self.tag_bind(tag, "<B1-Motion>", move)
+                    self.tag_bind(tag, "<ButtonRelease-1>", end)
 
     def _breathe(self):
         if not self.winfo_exists():
@@ -510,6 +524,7 @@ class Widget:
     def __init__(self):
         self.ui_state = accounts.load_ui_state()
         self.expanded: set[str] = set(self.ui_state.get("expanded", []))
+        self.collapsed: set[str] = set(self.ui_state.get("collapsed", []))
         self.results: queue.Queue = queue.Queue()
         self.commands: queue.Queue = queue.Queue()
         self.state: dict | None = None
@@ -568,10 +583,12 @@ class Widget:
                              subtitle=(t("subtitle"), t("subtitle_short")))
         self.sky.pack(side="left", fill="both", expand=True)
 
-        # Packed right to left, so this reads 📌 ▭ ▁ ✕ on screen.
+        # Packed right to left, so this reads 📌 ▭ — ✕ on screen.
         buttons = [("✕", self._close, "close", t("tip_close"), RED)]
         if self.tray:
             buttons.append(("▁", self._hide_to_tray, "tray", t("tip_tray"), CYAN))
+        else:
+            buttons.append(("—", self._minimize_window, "minimize", t("tip_minimize"), CYAN))
         buttons.append(("▭", self._toggle_compact, "compact", t("tip_compact"), CYAN))
         buttons.append(("📌", self._toggle_pin, "pin", t("tip_pin"), NEON))
 
@@ -588,13 +605,17 @@ class Widget:
             elif name == "compact":
                 self.compact_button, self.compact_tip = button, hint
 
-        for widget in (titlebar, self.sky):
+        self.sky.bind_drag(self._drag_start, self._drag_move, self._drag_end)
+        for widget in (titlebar, outer, shell):
             widget.bind("<Button-1>", self._drag_start)
             widget.bind("<B1-Motion>", self._drag_move)
-            widget.bind("<ButtonRelease-1>", lambda _e: self._drag_end())
+            widget.bind("<ButtonRelease-1>", self._drag_end)
 
         self.horizon = Horizon(shell)
         self.horizon.pack(fill="x")
+        self.horizon.bind("<Button-1>", self._drag_start)
+        self.horizon.bind("<B1-Motion>", self._drag_move)
+        self.horizon.bind("<ButtonRelease-1>", self._drag_end)
 
         self.body = tk.Frame(shell, bg=BG)
         self.body.pack(fill="both", expand=True)
@@ -754,14 +775,31 @@ class Widget:
     def _drag_start(self, event):
         self._drag_from = (event.x_root, event.y_root)
         self._win_from = (self.root.winfo_x(), self.root.winfo_y())
+        try:
+            event.widget.grab_set()
+        except Exception:
+            pass
 
     def _drag_move(self, event):
-        self.root.geometry(
-            f"+{self._win_from[0] + event.x_root - self._drag_from[0]}"
-            f"+{self._win_from[1] + event.y_root - self._drag_from[1]}")
+        dx = event.x_root - self._drag_from[0]
+        dy = event.y_root - self._drag_from[1]
+        nx = self._win_from[0] + dx
+        ny = max(0, self._win_from[1] + dy)
+        self.root.geometry(f"+{nx}+{ny}")
 
-    def _drag_end(self):
+    def _drag_end(self, event=None):
+        if event:
+            try:
+                event.widget.grab_release()
+            except Exception:
+                pass
+        self.root.update_idletasks()
         self._save_ui()
+
+    def _minimize_window(self):
+        self._save_ui()
+        self.hidden = True
+        self.root.withdraw()
 
     def _toggle_pin(self):
         pinned = not bool(self.root.attributes("-topmost"))
@@ -840,6 +878,7 @@ class Widget:
 
     def _hide_to_tray(self):
         if not self.tray:
+            self._minimize_window()
             return
         # Once, on the first hide: an icon nobody can find reads as a crash.
         first_time = not self.ui_state.get("tray_hint_shown")
@@ -940,6 +979,7 @@ class Widget:
     def _save_ui(self):
         self._remember_position()
         self.ui_state["expanded"] = sorted(self.expanded)
+        self.ui_state["collapsed"] = sorted(self.collapsed)
         accounts.save_ui_state(self.ui_state)
 
     def raise_window(self):
@@ -1283,13 +1323,23 @@ class Widget:
         inner.pack(side="left", fill="both", expand=True)
         return frame, inner
 
+    def _is_account_expanded(self, email: str, highlighted: bool | None = None, pending: bool = False) -> bool:
+        if email in self.collapsed:
+            return False
+        if email in self.expanded:
+            return True
+        if highlighted is None:
+            active = self._active_account()
+            highlighted = bool(active and active.get("email") == email)
+        return bool(highlighted or pending)
+
     def _render_account(self, account: dict):
         email = account["email"]
         running, loaded, pending = account["running"], account["loaded"], account["pending"]
         # A card is highlighted for what agy is really using; when nothing is
         # known to be running, the loaded account takes that role.
         highlighted = running or (loaded and not self.state.get("tracking"))
-        expanded = highlighted or pending or email in self.expanded
+        expanded = self._is_account_expanded(email, highlighted, pending)
         bg = CARD_ACTIVE if highlighted else CARD
 
         border = mix(BORDER, CYAN, 0.5) if highlighted else (AMBER if pending else BORDER)
@@ -1297,8 +1347,7 @@ class Widget:
         outer, card = self._card(self.content, bg, border, accent)
         outer.pack(fill="x", pady=3)
 
-        interactive = not (running or (loaded and not self.state.get("tracking")))
-        header = tk.Frame(card, bg=bg, cursor="hand2" if interactive else "")
+        header = tk.Frame(card, bg=bg, cursor="hand2")
         header.pack(fill="x", padx=10, pady=(7, 2))
         tk.Label(header, text="◆" if highlighted else "◇", bg=bg,
                  fg=CYAN if highlighted else (AMBER if pending else DIM),
@@ -1306,6 +1355,8 @@ class Widget:
         tk.Label(header, text=email, bg=bg, fg=TEXT if highlighted else MUTED,
                  font=F_MAIL if highlighted else F_MAIN).pack(side="left", padx=(6, 0))
 
+        tk.Label(header, text="▾" if expanded else "▸", bg=bg, fg=DIM,
+                 font=F_TINY, padx=3).pack(side="right")
         if running:
             tk.Label(header, text=t("running"), bg=bg, fg=CYAN,
                      font=F_TINY).pack(side="right")
@@ -1315,13 +1366,9 @@ class Widget:
         elif loaded:
             tk.Label(header, text=t("loaded"), bg=bg, fg=CYAN,
                      font=F_TINY).pack(side="right")
-        else:
-            tk.Label(header, text="▾" if expanded else "▸", bg=bg, fg=DIM,
-                     font=F_TINY).pack(side="right")
 
-        if interactive:
-            for widget in (header, *header.winfo_children()):
-                widget.bind("<Button-1>", lambda _e, m=email: self._toggle_account(m))
+        for widget in (header, *header.winfo_children()):
+            widget.bind("<Button-1>", lambda _e, m=email: self._toggle_account(m))
 
         if pending:
             tk.Label(card, text=t("pending_hint"), bg=bg, fg=AMBER, font=F_TINY,
@@ -1765,7 +1812,14 @@ class Widget:
                      bg=bg, fg=MUTED, font=F_MONO, anchor="w").pack(side="left")
 
     def _toggle_account(self, email: str):
-        self.expanded.symmetric_difference_update({email})
+        if self._is_account_expanded(email):
+            self.collapsed.add(email)
+            self.expanded.discard(email)
+        else:
+            self.collapsed.discard(email)
+            self.expanded.add(email)
+        self.ui_state["collapsed"] = sorted(self.collapsed)
+        self.ui_state["expanded"] = sorted(self.expanded)
         self._save_ui()
         self._render()
 
