@@ -17,6 +17,7 @@ import contextlib
 import ctypes
 import json
 import os
+import sys
 import time
 
 from . import config
@@ -32,8 +33,6 @@ STALE_AFTER_SECONDS = 36 * 3600
 _STILL_ACTIVE = 259
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
-
-import sys
 
 def _process_alive(pid: int | None) -> bool:
     """

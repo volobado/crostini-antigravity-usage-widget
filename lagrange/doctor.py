@@ -79,7 +79,7 @@ def run(deep: bool = True) -> Report:
     agy_name = "agy.exe" if sys.platform == "win32" else "agy"
     agy_path = discovery.find_agy()
     if not agy_path:
-        report.add(FAIL, agy_name, f"not found — set agy_path in ~/.lagrange/config.json")
+        report.add(FAIL, agy_name, "not found — set agy_path in ~/.lagrange/config.json")
     else:
         version = discovery.agy_version(agy_path) or "unknown"
         status = OK if version == VERIFIED_AGY_VERSION else WARN

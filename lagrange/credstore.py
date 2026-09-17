@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import sys
 
+
 class CredentialError(Exception):
     pass
 
@@ -94,13 +95,15 @@ if sys.platform == "win32":
         cred.TargetAlias = None
         cred.UserName = username or None
         if not _advapi32.CredWriteW(ctypes.byref(cred), 0):
-            raise CredentialError(f"CredWrite({target}): {ctypes.WinError(ctypes.get_last_error())}")
+            err = ctypes.WinError(ctypes.get_last_error())
+            raise CredentialError(f"CredWrite({target}): {err}")
 
     def delete(target: str) -> bool:
         if not _advapi32.CredDeleteW(target, CRED_TYPE_GENERIC, 0):
             if ctypes.get_last_error() == ERROR_NOT_FOUND:
                 return False
-            raise CredentialError(f"CredDelete({target}): {ctypes.WinError(ctypes.get_last_error())}")
+            err = ctypes.WinError(ctypes.get_last_error())
+            raise CredentialError(f"CredDelete({target}): {err}")
         return True
 
     def enumerate_targets(filter_pattern: str | None = None) -> list[str]:

@@ -1407,7 +1407,9 @@ class Widget:
         inner.pack(side="left", fill="both", expand=True)
         return frame, inner
 
-    def _is_account_expanded(self, email: str, highlighted: bool | None = None, pending: bool = False) -> bool:
+    def _is_account_expanded(
+        self, email: str, highlighted: bool | None = None, pending: bool = False
+    ) -> bool:
         if email in self.collapsed:
             return False
         if email in self.expanded:

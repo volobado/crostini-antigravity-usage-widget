@@ -164,4 +164,6 @@ def is_sommelier() -> bool:
         return False
     name = (_property(wm_window, "_NET_WM_NAME", "UTF8_STRING")
            or _property(wm_window, "WM_NAME", "STRING"))
-    return bool(name) and name.rstrip(b"\x00").decode("utf-8", "replace").strip().lower() == "sommelier"
+    if not name:
+        return False
+    return name.rstrip(b"\x00").decode("utf-8", "replace").strip().lower() == "sommelier"
